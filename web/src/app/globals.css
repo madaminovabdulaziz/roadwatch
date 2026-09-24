@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #09090b;
+  color: #e4e4e7;
+}
+
+a {
+  text-underline-offset: 3px;
+}

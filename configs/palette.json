@@ -1,0 +1,28 @@
+{
+ "_doc": "One colour per event class, shared by roadwatch/render.py (video), the website (timeline, charts, tables) and the demo. Hex RGB. Order = solution.CLASSES.",
+ "classes": {
+  "accident": "#ef4444",
+  "near_miss": "#f97316",
+  "red_light": "#dc2626",
+  "wrong_way": "#a855f7",
+  "illegal_u_turn": "#d946ef",
+  "stopped_vehicle": "#eab308",
+  "jaywalking": "#22c55e",
+  "failure_to_yield": "#14b8a6",
+  "illegal_turn": "#8b5cf6",
+  "solid_line_crossing": "#06b6d4",
+  "stop_line": "#f43f5e",
+  "congestion": "#f59e0b",
+  "road_obstacle": "#84cc16",
+  "fire_smoke": "#fb7185"
+ },
+ "objects": {
+  "car": "#60a5fa",
+  "bus": "#3b82f6",
+  "truck": "#2563eb",
+  "motorcycle": "#fbbf24",
+  "bicycle": "#facc15",
+  "person": "#34d399",
+  "other": "#a3a3a3"
+ }
+}
