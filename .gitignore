@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-export/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
@@ -22,6 +23,7 @@ report*.json
 weights/*
 !weights/download.sh
 !weights/README.md
+!weights/SHA256SUMS
 
 # OS / editors
 .DS_Store

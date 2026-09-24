@@ -1,0 +1,8 @@
+# Dev-only environment for scripts/fetch_weights.py; never installed for the submission.
+# ultralytics depends on non-headless opencv-python, so it lives in its own venv (SPEC §12.12):
+#   uv venv --python 3.11 .venv-export && uv pip install --python .venv-export/bin/python -r requirements-export.txt
+ultralytics==8.4.161
+torch==2.8.0
+torchvision==0.23.0
+pandas==2.3.3
+PyYAML==6.0.3
