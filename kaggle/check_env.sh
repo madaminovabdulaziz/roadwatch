@@ -16,6 +16,10 @@ WORK="${WORK:-/tmp/rw-check}"
 PY="$VENV/bin/python"
 cd "$REPO"
 
+# Kaggle injects its own paths (their sitecustomize imports wrapt); a clean machine has none.
+# Kaggle's python3 also lacks ensurepip, so the venv falls back to virtualenv below.
+unset PYTHONPATH
+
 echo "== machine"
 python3 --version
 echo "cpu cores: $(nproc)"
