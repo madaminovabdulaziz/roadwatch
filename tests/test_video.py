@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 import run_submission
-from roadwatch.video import FrameReader, probe, read_window
+from roadwatch import video
+from roadwatch.video import FrameReader, prefetch, probe, read_window
 from tests.conftest import INDEXED_FRAMES, INDEXED_SIZE, TINY_FPS, TINY_FRAMES, TINY_SIZE, read_index
 
 BACKENDS = ["pyav", "opencv"]
@@ -132,3 +133,50 @@ def test_corrupted_data_is_skipped_without_raising(indexed_video: Path, tmp_path
 
     assert len(frames) > INDEXED_FRAMES // 2
     assert indices(frames) == sorted(set(indices(frames)))
+
+
+def test_prefetch_preserves_order() -> None:
+    assert list(prefetch(range(100), depth=4)) == list(range(100))
+
+
+def test_prefetch_reraises_producer_errors() -> None:
+    def broken():
+        yield 1
+        raise RuntimeError("decoder died")
+
+    frames = prefetch(broken(), depth=2)
+    assert next(frames) == 1
+    with pytest.raises(RuntimeError, match="decoder died"):
+        next(frames)
+
+
+def test_prefetch_closes_its_source_when_the_consumer_stops_early() -> None:
+    closed = []
+
+    def source():
+        try:
+            yield from range(1000)
+        finally:
+            closed.append(True)
+
+    frames = prefetch(source(), depth=2)
+    assert next(frames) == 0
+    frames.close()
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("stop_after", [1, None])
+def test_pyav_reads_always_drain_the_decoder(
+    indexed_video: Path, monkeypatch: pytest.MonkeyPatch, stop_after: int | None
+) -> None:
+    # Regression: closing a frame-threaded FFmpeg decoder with frames in flight deadlocked (SPEC §12.22).
+    drained = []
+    real_drain = video._drain
+    monkeypatch.setattr(video, "_drain", lambda stream: drained.append(True) or real_drain(stream))
+
+    frames = FrameReader(indexed_video)
+    for n, _ in enumerate(frames):
+        if n == stop_after:
+            break
+
+    assert drained == [True]

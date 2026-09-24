@@ -10,6 +10,7 @@ Contract:
 - Frames are BGR uint8 at native size, or converted straight to `size=(width, height)` in the same
   colour-conversion pass (much cheaper than converting 4K and resizing afterwards).
 - Undecodable data is skipped; a reader gives up only after `video.max_consecutive_errors` in a row.
+- `prefetch(frames, depth)` decodes ahead on a background thread, so decoding overlaps the detector.
 
 Backends:
 - "pyav" (default) decodes with FFmpeg frame threading and derives frame_idx from each frame's pts
@@ -28,22 +29,23 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterator
+import queue
+import threading
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 import av
 import cv2
 import numpy as np
 
 from roadwatch.config import load_thresholds
-from roadwatch.types import VideoMeta
+from roadwatch.types import Frame, Size, VideoMeta
 
 log = logging.getLogger(__name__)
 
-Frame = tuple[int, float, np.ndarray]
-Size = tuple[int, int]
 Backend = Literal["pyav", "opencv"]
+T = TypeVar("T")
 
 # Tolerance when turning a time bound into a frame index, so t0 = k / fps maps back to exactly k.
 _INDEX_EPS = 1e-6
@@ -158,27 +160,46 @@ def _read_pyav(
 
     max_errors = load_thresholds()["video"]["max_consecutive_errors"]
     errors = 0
-    for packet in container.demux(stream):
-        try:
-            frames = packet.decode()
-        except av.FFmpegError as exc:
-            errors += 1
-            if errors > max_errors:
-                log.error("%s: %d undecodable packets in a row (%s); stopping", meta.video_id, errors, exc)
-                return
-            continue
-        errors = 0
-        for frame in frames:
-            if frame.pts is None:
+    try:
+        for packet in container.demux(stream):
+            try:
+                frames = packet.decode()
+            except av.FFmpegError as exc:
+                errors += 1
+                if errors > max_errors:
+                    log.error(
+                        "%s: %d undecodable packets in a row (%s); stopping", meta.video_id, errors, exc
+                    )
+                    return
                 continue
-            idx = round(float((frame.pts - origin) * time_base) * meta.fps)
-            if idx < next_idx or (not skip_nonref and idx % stride):
-                continue
-            t_sec = idx / meta.fps
-            if t_sec >= t1:
-                return
-            yield idx, t_sec, _to_bgr(frame, size)
-            next_idx = idx + (stride if skip_nonref else 1)
+            errors = 0
+            for frame in frames:
+                if frame.pts is None:
+                    continue
+                idx = round(float((frame.pts - origin) * time_base) * meta.fps)
+                if idx < next_idx or (not skip_nonref and idx % stride):
+                    continue
+                t_sec = idx / meta.fps
+                if t_sec >= t1:
+                    return
+                yield idx, t_sec, _to_bgr(frame, size)
+                next_idx = idx + (stride if skip_nonref else 1)
+    finally:
+        _drain(stream)
+
+
+def _drain(stream: av.video.stream.VideoStream) -> None:
+    """Flush the decoder so no frame is in flight when the container closes.
+
+    Closing a frame-threaded FFmpeg decoder that still holds frames can deadlock in its thread
+    teardown (seen when a read stops early, e.g. at a window's end or a deadline), so every PyAV
+    read ends by sending end-of-stream and collecting the remaining frames.
+    """
+    try:
+        for _ in stream.codec_context.decode(None):
+            pass
+    except av.FFmpegError:
+        pass
 
 
 def _to_bgr(frame: av.VideoFrame, size: Size | None) -> np.ndarray:
@@ -219,3 +240,57 @@ def _read_opencv(
             idx += 1
     finally:
         cap.release()
+
+
+class _Failure:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
+_DONE = object()
+
+
+def prefetch(items: Iterable[T], depth: int) -> Iterator[T]:
+    """Iterate `items` on a background thread, at most `depth` ahead of the consumer.
+
+    Order is preserved and an exception in the producer is re-raised in the consumer. Closing the
+    returned generator early (break, return, error) stops the producer and closes `items`. PyAV and
+    CUDA both release the GIL, so decoding really overlaps the detector.
+    """
+    buffer: queue.Queue = queue.Queue(maxsize=max(1, depth))
+    stop = threading.Event()
+    source = iter(items)
+
+    def produce() -> None:
+        try:
+            for item in source:
+                while not stop.is_set():
+                    try:
+                        buffer.put(item, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if stop.is_set():
+                    return
+        except BaseException as exc:  # handed to the consumer, which re-raises it
+            buffer.put(_Failure(exc))
+        finally:
+            buffer.put(_DONE)
+
+    worker = threading.Thread(target=produce, name="frame-prefetch", daemon=True)
+    worker.start()
+    try:
+        while (item := buffer.get()) is not _DONE:
+            if isinstance(item, _Failure):
+                raise item.exc
+            yield item
+    finally:
+        stop.set()
+        while worker.is_alive():
+            try:
+                buffer.get(timeout=0.1)
+            except queue.Empty:
+                continue
+        close = getattr(source, "close", None)
+        if close:
+            close()
