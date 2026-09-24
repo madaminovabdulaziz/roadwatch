@@ -1,14 +1,14 @@
 """EDA data for the website from the sample videos and cache/tracks (RUNBOOK P1.5, WEBSITE_SPEC "EDA").
 
-Writes web/public/data/eda/ (JSON for interactive charts, PNG only for image overlays):
+Writes web/public/data/eda/ (JSON for interactive charts, images only for overlays on the frame):
 - summary.json: per video resolution, fps, duration, codec, pixel format, mean brightness over time
   (lighting proxy; needs the video file, else stats come from the track-cache sidecar);
 - <video>/counts.json: mean visible objects per class in 1 s bins;
 - <video>/density.json: new vehicle / person tracks per minute;
 - <video>/speeds.json: speed histogram (km/h) of moving vehicles per lane (needs the homography);
 - <video>/signals.json: signal timeline (only with --signals: decodes frames at native size);
-- flow_field.json + lane_flow.png, heatmap.png, trajectories.png over configs/reference.jpg, pooled
-  over all videos (1920 px wide).
+- flow_field.json + lane_flow.jpg, heatmap.jpg, trajectories.jpg over configs/reference.jpg, pooled
+  over all videos (1920 px wide; JPEG, since PNGs of a photo are ~3 MB each on a phone).
 Everything is deterministic (sorted keys, rounded numbers), so re-running gives identical files.
 
 Usage: python scripts/eda.py samples/ [--cache cache/tracks] [--signals]
@@ -39,11 +39,12 @@ from roadwatch.scene.overlay import draw_scene  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
 from roadwatch.video import probe, read_window  # noqa: E402
 
-OUT_WIDTH = 1920  # overlay PNG width for the web
+OUT_WIDTH = 1920  # overlay image width for the web
 BRIGHTNESS_SAMPLES = 30
 SPEED_BIN_KMH = 5
 SPEED_MAX_KMH = 100
 MOVING_MPS = 1.0  # speeds below this are waiting, not driving, and stay out of the histogram
+JPEG_QUALITY = 85
 
 
 def _dump(path: Path, data: Any) -> None:
@@ -131,7 +132,7 @@ def _scaled(bg: np.ndarray) -> tuple[np.ndarray, float]:
     return cv2.resize(bg, (OUT_WIDTH, round(bg.shape[0] * k)), interpolation=cv2.INTER_AREA), k
 
 
-def heatmap_png(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
+def heatmap_image(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
     """Footprint density (log scale, blurred) as a colour overlay on the background."""
     img, k = _scaled(bg)
     h, w = img.shape[:2]
@@ -147,7 +148,7 @@ def heatmap_png(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
     return (img * (1 - alpha) + colour * alpha).astype(np.uint8)
 
 
-def trajectories_png(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
+def trajectories_image(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
     """Every road-user track as a thin line, hue = its overall image-space direction."""
     img, k = _scaled(bg)
     img = (img * 0.5).astype(np.uint8)
@@ -164,7 +165,7 @@ def trajectories_png(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
     return img
 
 
-def lane_flow_png(field: dict[str, Any], bg: np.ndarray, scene: Scene) -> np.ndarray:
+def lane_flow_image(field: dict[str, Any], bg: np.ndarray, scene: Scene) -> np.ndarray:
     """Flow-field arrows (white) over the scene layers."""
     img, k = _scaled(draw_scene(bg, scene) if scene.layers else bg)
     cell = field["cell_px"] * k
@@ -243,11 +244,11 @@ def main() -> int:
     field = flow_field(all_tt, width, height)
     _dump(args.out / "flow_field.json", field)
     for name, img in (
-        ("heatmap.png", heatmap_png(all_tt, bg)),
-        ("trajectories.png", trajectories_png(all_tt, bg)),
-        ("lane_flow.png", lane_flow_png(field, bg, scene)),
+        ("heatmap.jpg", heatmap_image(all_tt, bg)),
+        ("trajectories.jpg", trajectories_image(all_tt, bg)),
+        ("lane_flow.jpg", lane_flow_image(field, bg, scene)),
     ):
-        cv2.imwrite(str(args.out / name), img)
+        cv2.imwrite(str(args.out / name), img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     print(f"{len(step_velocities(all_tt))} moving steps pooled; wrote {args.out}")
     return 0
 

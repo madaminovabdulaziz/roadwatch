@@ -23,7 +23,7 @@ buttons still work.
 | File | Written by | Used on |
 |---|---|---|
 | `metrics.json` | `scripts/eval_dev.py` | Home, Results |
-| `eda/summary.json`, `eda/<video>/*.json`, `eda/*.png` | `scripts/eda.py samples/` | EDA |
+| `eda/summary.json`, `eda/<video>/*.json`, `eda/*.jpg` | `scripts/eda.py samples/` | EDA |
 | `results/index.json` + `results/<id>/{annotated.mp4, poster.jpg, events.json, risk.json}` | `scripts/render_samples.py` (P2.3) | Home, Results, Demo examples, Dashboard |
 | `results/gallery.json`, `results/failures.json`, `dashboard/event_heat.png` | P2.3 / P2.4 | Results, Dashboard |
 | `scene_overlay.png` | `scripts/render_scene.py --out web/public/data/scene_overlay.png` | Approach |

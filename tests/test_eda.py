@@ -83,9 +83,9 @@ def test_eda_writes_all_outputs_deterministically(tmp_path: Path, tiny_video: Pa
     for expected in (
         "summary.json",
         "flow_field.json",
-        "heatmap.png",
-        "trajectories.png",
-        "lane_flow.png",
+        "heatmap.jpg",
+        "trajectories.jpg",
+        "lane_flow.jpg",
         "tiny/counts.json",
         "tiny/density.json",
         "other/counts.json",

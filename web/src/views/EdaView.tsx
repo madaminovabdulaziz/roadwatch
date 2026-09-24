@@ -62,11 +62,11 @@ export default function EdaView() {
       {stem && <PerVideo key={stem} stem={stem} />}
 
       <Section title="Where things move">
-        <Images files={["heatmap.png", "trajectories.png"]} captions={["Footprint density (log scale)", "Tracks, colour = direction of travel"]} />
+        <Images files={["heatmap.jpg", "trajectories.jpg"]} captions={["Footprint density (log scale)", "Tracks, colour = direction of travel"]} />
       </Section>
 
       <Section title="Learned traffic direction" changed="lane directions in the scene file are proposed from this field (scripts/learn_lane_flow.py) instead of being guessed by hand.">
-        <Images files={["lane_flow.png"]} captions={["Mean motion per grid cell over the scene layers"]} />
+        <Images files={["lane_flow.jpg"]} captions={["Mean motion per grid cell over the scene layers"]} />
       </Section>
     </>
   );
