@@ -18,6 +18,8 @@ outputs/
 predictions.json
 predictions_dev.json
 report*.json
+configs/*.bak
+configs/*.tmp
 
 # Model weights live in the release archive fetched by weights/download.sh
 weights/*

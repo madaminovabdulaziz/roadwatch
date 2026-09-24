@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RoadWatch scene calibration</title>
+<!-- Served by scripts/calibrate_scene.py. Coordinates are native-resolution pixels (SPEC §4). -->
+<style>
+  :root { --bg: #16181c; --panel: #1f2228; --line: #343842; --text: #e6e8eb; --muted: #9aa0aa; --accent: #4f9dff; --warn: #ffb44f; --bad: #ff6464; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; overflow: hidden; cursor: crosshair; }
+  canvas { display: block; }
+  #hint { position: absolute; left: 8px; bottom: 8px; background: rgba(0,0,0,.7); padding: 6px 10px; border-radius: 6px; pointer-events: none; }
+  #side { width: 340px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  #side section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  #layers button { display: flex; width: 100%; align-items: center; gap: 8px; margin: 1px 0; padding: 3px 6px; background: none; border: 1px solid transparent; color: var(--text); border-radius: 4px; cursor: pointer; text-align: left; font: inherit; }
+  #layers button.on { border-color: var(--accent); background: rgba(79,157,255,.12); }
+  .key { width: 16px; color: var(--muted); font-family: monospace; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .count { margin-left: auto; color: var(--muted); }
+  #form label { display: block; margin: 4px 0 2px; color: var(--muted); }
+  #form input, #form select { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  .row { display: flex; gap: 6px; margin-top: 8px; }
+  .btn { padding: 5px 10px; border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; font: inherit; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #shapes { flex: 1; overflow: auto; }
+  .shape { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+  .shape:hover { color: var(--accent); }
+  .shape .x { margin-left: auto; color: var(--bad); cursor: pointer; padding: 0 4px; }
+  #status { min-height: 20px; }
+  #problems { color: var(--warn); margin: 4px 0 0; padding-left: 16px; }
+  .dirty { color: var(--warn); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><canvas id="cv"></canvas><div id="hint"></div></div>
+  <div id="side">
+    <section><h2>Layer</h2><div id="layers"></div></section>
+    <section id="formbox" hidden><h2 id="formtitle">Attributes</h2><form id="form"></form></section>
+    <section>
+      <label><input type="checkbox" id="uturn"> U-turns prohibited everywhere</label>
+      <div class="row"><button class="btn primary" id="save">Save (S)</button><button class="btn" id="fit">Fit (F)</button><button class="btn" id="toggle">Hide (H)</button></div>
+      <div id="status"></div><ul id="problems"></ul>
+    </section>
+    <section id="shapes"><h2>Shapes</h2><div id="shapelist"></div></section>
+  </div>
+</div>
+<script>
+"use strict";
+const KEYS = "1234567890qwe";
+const MIN = { polygon: 3, polyline: 2, line: 2, rect: 2, arrow: 2, point: 1 };
+const FIXED = { line: 2, rect: 2, arrow: 2, point: 1 };  // finish automatically at this many points
+const HELP = {
+  lanes: "id: n1 · direction_group: NB · approach: S · signal: L1 · allowed_exits: N_out,E_out",
+  lane_directions: "tail then head, in the driving direction; lane = lane id",
+  stop_lines: "2 points; lanes: n1,n2 · signal: L1",
+  signals: "box around ONE lamp (2 corners); id: L1 · lamp: red/yellow/green",
+  homography: "a point on the road with known position in metres (lane width 3.5 m)",
+};
+
+let S = null;               // server state: layers, colours, image_size
+let shapes = [];            // [{layer, pts, attrs}]
+let layer = "carriageway";
+let cur = [];               // points of the shape being drawn
+let editing = null;         // index of the shape whose attributes are open, or {pending: shape}
+let view = { k: 1, x: 0, y: 0 };
+let hidden = false, dirty = false;
+const img = new Image();
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const $ = (id) => document.getElementById(id);
+
+function status(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
+function setDirty(v) { dirty = v; $("save").textContent = v ? "Save (S) •" : "Save (S)"; }
+
+async function boot() {
+  S = await (await fetch("/api/state")).json();
+  shapes = S.shapes;
+  $("uturn").checked = S.u_turn_prohibited_everywhere;
+  showProblems(S.problems);
+  img.onload = () => { resize(); fit(); renderLayers(); renderShapes(); draw(); };
+  img.src = "/reference.jpg";
+}
+
+function renderLayers() {
+  const box = $("layers"); box.innerHTML = "";
+  Object.keys(S.layers).forEach((name, i) => {
+    const b = document.createElement("button");
+    const n = shapes.filter((s) => s.layer === name).length;
+    b.className = name === layer ? "on" : "";
+    b.innerHTML = `<span class="key">${KEYS[i]}</span><span class="sw" style="background:${S.colours[name]}"></span>${name}<span class="count">${S.layers[name].kind}${n ? " · " + n : ""}</span>`;
+    b.onclick = () => pickLayer(name);
+    box.appendChild(b);
+  });
+  hint();
+}
+
+function hint() {
+  const L = S.layers[layer];
+  const need = FIXED[L.kind] ? `${FIXED[L.kind]} click(s)` : `≥${MIN[L.kind]} clicks, Enter`;
+  $("hint").textContent = `${layer} (${L.kind}: ${need})${HELP[layer] ? " — " + HELP[layer] : ""} · U undo · Esc cancel · wheel zoom · right-drag pan`;
+}
+
+function pickLayer(name) { if (cur.length) cur = []; layer = name; closeForm(); renderLayers(); draw(); }
+
+function renderShapes() {
+  const box = $("shapelist"); box.innerHTML = "";
+  shapes.forEach((s, i) => {
+    const d = document.createElement("div"); d.className = "shape";
+    const label = s.attrs.id || s.attrs.lane || (s.attrs.world_x !== undefined ? `(${s.attrs.world_x}, ${s.attrs.world_y}) m` : "") || `#${i}`;
+    d.innerHTML = `<span class="sw" style="background:${S.colours[s.layer]}"></span>${s.layer}: ${escapeHtml(label)}${s.attrs.lamp ? " " + s.attrs.lamp : ""}<span class="x" title="delete">×</span>`;
+    d.onclick = (e) => {
+      if (e.target.classList.contains("x")) { shapes.splice(i, 1); closeForm(); setDirty(true); renderLayers(); renderShapes(); draw(); }
+      else if (S.layers[s.layer].fields.length) openForm(i);
+    };
+    box.appendChild(d);
+  });
+}
+
+function escapeHtml(t) { return String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ---- attribute form -------------------------------------------------------------------------
+function ids(name) { return [...new Set(shapes.filter((s) => s.layer === name).map((s) => s.attrs.id).filter(Boolean))]; }
+function nextId(prev) { const m = /^(.*?)(\d+)$/.exec(prev || ""); return m ? m[1] + (Number(m[2]) + 1) : ""; }
+function lastAttrs(name) { const same = shapes.filter((s) => s.layer === name); return same.length ? same[same.length - 1].attrs : {}; }
+
+function openForm(target) {
+  const shape = typeof target === "number" ? shapes[target] : target.pending;
+  const fresh = typeof target !== "number";
+  editing = target;
+  const form = $("form"); form.innerHTML = "";
+  const prev = fresh ? lastAttrs(shape.layer) : shape.attrs;
+  const lists = { signal: ids("signals"), lane: ids("lanes"), lanes: ids("lanes"), allowed_exits: ids("exits"), direction_group: [...new Set(shapes.filter((s) => s.attrs.direction_group).map((s) => s.attrs.direction_group))] };
+  for (const f of S.layers[shape.layer].fields) {
+    const lab = document.createElement("label"); lab.textContent = f; form.appendChild(lab);
+    let input;
+    if (f === "lamp") {
+      input = document.createElement("select");
+      for (const v of ["red", "yellow", "green"]) input.add(new Option(v, v));
+      const order = ["red", "yellow", "green"];
+      input.value = fresh ? order[(order.indexOf(prev.lamp) + 1) % 3] : prev.lamp;
+    } else {
+      input = document.createElement("input");
+      let v = prev[f] ?? "";
+      if (fresh && f === "id") v = shape.layer === "signals" && prev.lamp !== "green" ? (prev.id || "") : nextId(prev.id);
+      if (fresh && f.startsWith("world_")) v = "";
+      if (fresh && f === "lane") v = laneAt(shape.pts[0]);  // the lane the arrow starts in
+      input.value = v;
+      if (f.startsWith("world_")) input.inputMode = "decimal";
+      if (lists[f] && lists[f].length) {
+        const dl = document.createElement("datalist"); dl.id = "dl_" + f;
+        lists[f].forEach((x) => dl.appendChild(new Option(x)));
+        form.appendChild(dl); input.setAttribute("list", dl.id);
+      }
+    }
+    input.name = f; form.appendChild(input);
+  }
+  const row = document.createElement("div"); row.className = "row";
+  row.innerHTML = `<button class="btn primary" type="submit">OK (Enter)</button><button class="btn" type="button" id="cancel">Cancel (Esc)</button>`;
+  form.appendChild(row);
+  $("formtitle").textContent = `${shape.layer} attributes`;
+  $("formbox").hidden = false;
+  $("cancel").onclick = () => { closeForm(); draw(); };
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const attrs = {};
+    for (const f of S.layers[shape.layer].fields) attrs[f] = form.elements[f].value.trim();
+    const err = checkAttrs(shape.layer, attrs);
+    if (err) { status(err, "dirty"); return; }
+    shape.attrs = attrs;
+    if (fresh) commit(shape);
+    closeForm(); setDirty(true); renderLayers(); renderShapes(); draw();
+  };
+  form.querySelector("input,select")?.focus();
+}
+
+function checkAttrs(name, a) {
+  if ("id" in a && !a.id) return "id is required";
+  if (name === "homography" && (isNaN(parseFloat(a.world_x)) || isNaN(parseFloat(a.world_y)))) return "world_x and world_y must be numbers (metres)";
+  if (name === "lane_directions" && !ids("lanes").includes(a.lane)) return `lane must be an existing lane id (${ids("lanes").join(", ") || "draw lanes first"})`;
+  return "";
+}
+
+function inside(p, poly) {  // even-odd ray casting, same rule as roadwatch.scene.scene.points_in_polygon
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > p[1]) !== (yj > p[1]) && p[0] < xi + ((p[1] - yi) * (xj - xi)) / (yj - yi)) hit = !hit;
+  }
+  return hit;
+}
+
+function laneAt(p) { const lane = shapes.find((s) => s.layer === "lanes" && inside(p, s.pts)); return lane ? lane.attrs.id : ""; }
+
+function closeForm() { editing = null; $("formbox").hidden = true; $("form").innerHTML = ""; }
+
+function commit(shape) {
+  if (!S.layers[shape.layer].multi) shapes = shapes.filter((s) => s.layer !== shape.layer);
+  shapes.push(shape);
+}
+
+// ---- drawing a shape --------------------------------------------------------------------------
+function finish() {
+  const kind = S.layers[layer].kind;
+  if (cur.length < MIN[kind]) { status(`${layer} needs at least ${MIN[kind]} points`, "dirty"); return; }
+  const shape = { layer, pts: cur, attrs: {} };
+  cur = [];
+  if (S.layers[layer].fields.length) openForm({ pending: shape });
+  else { commit(shape); setDirty(true); renderLayers(); renderShapes(); }
+  draw();
+}
+
+function addPoint(p) {
+  if (editing !== null) return;  // finish the form first
+  cur.push([Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]);
+  const fixed = FIXED[S.layers[layer].kind];
+  if (fixed && cur.length >= fixed) finish(); else draw();
+}
+
+// ---- view ---------------------------------------------------------------------------------------
+function resize() { const r = $("stage").getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; cv.style.width = r.width + "px"; cv.style.height = r.height + "px"; }
+function fit() {
+  if (!cv.width || !cv.height) return;  // not laid out yet; the ResizeObserver fits later
+  const k = Math.min(cv.width / img.width, cv.height / img.height); view = { k, x: (cv.width - img.width * k) / 2, y: (cv.height - img.height * k) / 2 }; draw(); }
+function toImage(ev) { const r = cv.getBoundingClientRect(); const sx = (ev.clientX - r.left) * devicePixelRatio, sy = (ev.clientY - r.top) * devicePixelRatio; return [(sx - view.x) / view.k, (sy - view.y) / view.k]; }
+
+function draw() {
+  if (!S) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(view.k, 0, 0, view.k, view.x, view.y);
+  ctx.drawImage(img, 0, 0);
+  if (!hidden) shapes.forEach((s, i) => drawShape(s, editing === i));
+  if (editing && editing.pending) drawShape(editing.pending, true);
+  if (cur.length) drawShape({ layer, pts: cur, attrs: {} }, true, true);
+}
+
+function drawShape(s, hot, open = false) {
+  const kind = S.layers[s.layer].kind, col = S.colours[s.layer], px = 1 / view.k * devicePixelRatio;
+  ctx.lineWidth = (hot ? 3 : 2) * px; ctx.strokeStyle = col; ctx.fillStyle = col;
+  const P = s.pts;
+  if (kind === "point") { dot(P[0], 6 * px); }
+  else if (kind === "rect" && P.length === 2) { ctx.strokeRect(P[0][0], P[0][1], P[1][0] - P[0][0], P[1][1] - P[0][1]); }
+  else {
+    ctx.beginPath(); P.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+    if (kind === "polygon" && !open) { ctx.closePath(); ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1; }
+    ctx.stroke();
+    if (kind === "arrow" && P.length === 2) arrowHead(P[0], P[1], 18 * px);
+  }
+  if (open || hot) P.forEach((p) => dot(p, 3.5 * px));
+  const label = s.attrs.id ? s.attrs.id + (s.attrs.lamp ? ":" + s.attrs.lamp[0] : "") : s.attrs.lane ? "→" + s.attrs.lane : s.attrs.world_x !== undefined && s.attrs.world_x !== "" ? `(${s.attrs.world_x},${s.attrs.world_y})` : "";
+  if (label && P.length) {
+    const c = kind === "polygon" ? P.reduce((a, p) => [a[0] + p[0] / P.length, a[1] + p[1] / P.length], [0, 0]) : P[0];
+    ctx.font = `${14 * px}px system-ui`; ctx.lineWidth = 3 * px; ctx.strokeStyle = "#000"; ctx.strokeText(label, c[0] + 6 * px, c[1] - 6 * px); ctx.fillText(label, c[0] + 6 * px, c[1] - 6 * px);
+  }
+}
+function dot(p, r) { ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 2 * Math.PI); ctx.fill(); }
+function arrowHead(a, b, len) { const t = Math.atan2(b[1] - a[1], b[0] - a[0]); ctx.beginPath(); ctx.moveTo(b[0], b[1]); ctx.lineTo(b[0] - len * Math.cos(t - 0.4), b[1] - len * Math.sin(t - 0.4)); ctx.lineTo(b[0] - len * Math.cos(t + 0.4), b[1] - len * Math.sin(t + 0.4)); ctx.closePath(); ctx.fill(); }
+
+// ---- input ---------------------------------------------------------------------------------------
+let drag = null;
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, pan: e.button !== 0, moved: false }; });
+window.addEventListener("mousemove", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.hypot(dx, dy) > 4) drag.moved = true;
+  if (drag.pan || drag.moved) { userView = true; view.x = drag.vx + dx * devicePixelRatio; view.y = drag.vy + dy * devicePixelRatio; draw(); }
+});
+window.addEventListener("mouseup", (e) => { if (drag && !drag.pan && !drag.moved && e.target === cv) addPoint(toImage(e)); drag = null; });
+cv.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  userView = true;
+  const [ix, iy] = toImage(e), f = Math.pow(1.2, -e.deltaY / 100);
+  view.k = Math.min(Math.max(view.k * f, 0.02), 20);
+  const r = cv.getBoundingClientRect();
+  view.x = (e.clientX - r.left) * devicePixelRatio - ix * view.k; view.y = (e.clientY - r.top) * devicePixelRatio - iy * view.k; draw();
+}, { passive: false });
+// Refit on layout changes until the user zooms or pans (the stage can be 0x0 when the image loads).
+let userView = false;
+new ResizeObserver(() => {
+  if (!img.width) return;
+  resize();
+  if (!userView || !(view.k > 0)) fit(); else draw();
+}).observe($("stage"));
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+window.addEventListener("keydown", (e) => {
+  const typing = ["INPUT", "SELECT"].includes(document.activeElement?.tagName);
+  if (e.key === "Escape") { if (editing !== null) closeForm(); cur = []; draw(); return; }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const i = KEYS.indexOf(e.key.toLowerCase());
+  if (i >= 0 && i < Object.keys(S.layers).length) { pickLayer(Object.keys(S.layers)[i]); return; }
+  if (e.key === "Enter") finish();
+  else if (e.key === "u" || e.key === "U") {
+    if (cur.length) cur.pop();
+    else if (shapes.length && editing === null) { const s = shapes.pop(); status(`removed last shape (${s.layer})`); setDirty(true); renderLayers(); renderShapes(); }
+    draw();
+  } else if (e.key === "s" || e.key === "S") save();
+  else if (e.key === "f" || e.key === "F") fit();
+  else if (e.key === "h" || e.key === "H") toggle();
+});
+
+function toggle() { hidden = !hidden; $("toggle").textContent = hidden ? "Show (H)" : "Hide (H)"; draw(); }
+function showProblems(list) { $("problems").innerHTML = (list || []).map((p) => `<li>${escapeHtml(p)}</li>`).join(""); }
+
+async function save() {
+  if (editing !== null) { status("finish the attributes form first", "dirty"); return; }
+  const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shapes, u_turn_prohibited_everywhere: $("uturn").checked }) });
+  const res = await r.json();
+  if (!r.ok) { status("save failed: " + res.error, "dirty"); return; }
+  setDirty(false);
+  status(`saved ${res.path}` + (res.problems.length ? ` — ${res.problems.length} problem(s):` : " — consistent"), res.problems.length ? "dirty" : "");
+  showProblems(res.problems);
+}
+
+$("save").onclick = save; $("fit").onclick = fit; $("toggle").onclick = toggle;
+$("uturn").onchange = () => setDirty(true);
+boot();
+</script>
+</body>
+</html>
