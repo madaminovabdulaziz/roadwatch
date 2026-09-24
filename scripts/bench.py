@@ -15,8 +15,9 @@ video-second ("x", the unit of the harness's 3x budget). Decode modes:
 Perception modes (--perception; detector loaded once, --imgsz to override the input size):
 
   part_a           run_perception: decode thread + batched detection + tracking (Part A's path)
-  part_b           Part B's frame path: the harness decodes every native frame, we detect + track
-                   every risk.stride-th one (batch 1); risk features come later and cost little
+  part_b           Part B's path: the harness decodes every native frame and the real RiskCore steps
+                   through them (resize, detect + track every risk.stride-th frame, kinematics, score);
+                   without a calibrated homography a stand-in metric scene keeps it doing full work
   --check-fp16     on CUDA, compares FP16 detections with FP32 on the first seconds of each video
 
 --verify checks, per video, that the fast path's frames are the harness's frames at the same index
@@ -127,27 +128,41 @@ def time_part_a(path: Path, limit_sec: float, detector) -> tuple[int, float, dic
 
 
 def time_part_b(path: Path, meta: VideoMeta, limit_sec: float, detector) -> tuple[int, float, dict]:
+    """The real RiskCore on the harness's frames. Without a calibrated homography RiskCore would skip
+    perception entirely, so a stand-in metric scene makes it do its full per-frame work."""
     from roadwatch.config import load_thresholds
-    from roadwatch.perception.tracker import OnlineTracker
+    from roadwatch.risk import RiskCore
+    from roadwatch.scene.scene import Scene
 
+    scene = Scene.load()
+    if not scene.has("homography"):
+        unit = [[0, 0], [100, 0], [100, 100], [0, 100]]
+        scene = Scene({"homography": {"image_pts": unit, "world_pts": [[0, 0], [1, 0], [1, 1], [0, 1]]}})
+    core = RiskCore(detector=detector, scene=scene)
+    core.reset(
+        {
+            "video_id": path.name,
+            "fps": meta.fps,
+            "width": meta.width,
+            "height": meta.height,
+            "n_frames": meta.n_frames,
+        }
+    )
     stride = load_thresholds()["risk"]["stride"]
-    tracker = OnlineTracker(meta.fps / stride)
-    count, detect_sec = 0, 0.0
+    count, step_sec = 0, 0.0
     start = time.perf_counter()
     frames = harness_frames(path, meta)
     try:
         for idx, t_sec, frame in frames:
             if t_sec >= limit_sec:
                 break
-            if idx % stride == 0:
-                tick = time.perf_counter()
-                dets = detector.predict([(idx, t_sec, frame)])[0]
-                detect_sec += time.perf_counter() - tick
-                tracker.update(dets)
-                count += 1
+            tick = time.perf_counter()
+            core.step(frame, t_sec)
+            step_sec += time.perf_counter() - tick
+            count += idx % stride == 0
     finally:
         frames.close()
-    return count, time.perf_counter() - start, {"detect_sec": round(detect_sec, 2)}
+    return count, time.perf_counter() - start, {"step_sec": round(step_sec, 2)}
 
 
 def check_fp16(path: Path, meta: VideoMeta, fp16, fp32, seconds: float = 3.0) -> dict:
