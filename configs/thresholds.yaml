@@ -57,8 +57,28 @@ kinematics:                   # SPEC §3
   persistence_max_dist_m: 2.0
   persistence_max_speed_mps: 0.5  # only tracks this slow at the break are linked (stationary objects)
 
-signal:                       # SPEC §4 / RUNBOOK P1.2
-  median_sec: 0.5
+lane_flow:                    # RUNBOOK P1.2 (roadwatch/scene/flow.py, scripts/learn_lane_flow.py); pixels are native
+  min_speed_px_s: 40.0        # slower image motion is jitter, not driving (about 1 m/s near the camera at 4K)
+  min_samples: 30             # a lane needs this many moving steps before a direction is proposed
+  min_consistency: 0.7        # length of the mean unit vector; lower = traffic in the lane disagrees
+  cell_px: 120                # flow-field grid cell for the EDA page
+  min_cell_samples: 5
+
+signal:                       # SPEC §4 / RUNBOOK P1.2 (roadwatch/scene/light.py)
+  median_sec: 0.5             # majority filter over this window (centred offline, trailing online)
+  hue_ranges:                 # OpenCV hue 0-179 of a lit lamp
+    red: [[0, 10], [170, 180]]
+    yellow: [[15, 35]]
+    green: [[40, 100]]
+  min_saturation: 80          # pixels less saturated than this do not count as lamp colour
+  min_contrast: 0.1           # a lamp whose score never varies more than this is never judged lit
+  lit_threshold: 0.5          # the brightest lamp is lit if its score is past this share of its range
+  baseline_percentiles: [5, 95]  # offline per-lamp "off" and "on" levels
+  flow:                       # fallback when a signal has no lamp boxes (low confidence)
+    bin_sec: 1.0
+    moving_speed_mps: 2.0
+    stopped_speed_mps: 0.5
+    queue_m: 20.0             # vehicles this close upstream of the stop line count as waiting
 
 runtime:                      # SPEC §11 and §12 (time budget)
   part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
