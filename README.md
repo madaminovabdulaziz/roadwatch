@@ -69,7 +69,8 @@ python scripts/check_determinism.py samples/       # two harness runs, identical
 python scripts/make_predictions_samples.py         # the predictions_samples.json deliverable
 python scripts/eda.py samples/                     # EDA data for the website
 ```
- `requirements.txt` is a lock generated from `requirements.in`
+
+`requirements.txt` is a lock generated from `requirements.in`
 (see the command at the top of that file). Running on a Kaggle T4: `kaggle/README.md`.
 
 ## Where things are
