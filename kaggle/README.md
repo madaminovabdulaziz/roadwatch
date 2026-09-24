@@ -55,3 +55,21 @@ made a copy (Drive → Shared with me → right-click → Make a copy) shared as
 The bench prints every decode mode as "x dur" (wall time / video time, the unit of the 3x budget)
 and checks that the fast path's frames line up with the harness's frames.
 
+## Cell 4: weights, tests on the GPU, track cache, perception benchmark (RUNBOOK P0.3)
+
+Re-run Cell 1 first. `weights/download.sh` is the organizers' path; while the repository is private it
+uses the `GITHUB_TOKEN` secret to read the release.
+
+```python
+import os
+from kaggle_secrets import UserSecretsClient
+os.environ["GITHUB_TOKEN"] = UserSecretsClient().get_secret("GITHUB_TOKEN")
+!bash /tmp/roadwatch/kaggle/setup_venv.sh && bash /tmp/roadwatch/kaggle/fetch_samples.sh && bash /tmp/roadwatch/weights/download.sh
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python -m pytest -p no:cacheprovider
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python scripts/bench.py /tmp/samples --seconds 30 --modes harness --workers "" --perception --check-fp16 --json /kaggle/working/bench_perception_960.json
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python scripts/bench.py /tmp/samples --seconds 30 --modes "" --workers "" --perception --imgsz 1280 --json /kaggle/working/bench_perception_1280.json
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python scripts/cache_tracks.py /tmp/samples --out /kaggle/working/tracks
+```
+
+Download `/kaggle/working/tracks/*.parquet` + `*.json` (Output panel) into `cache/tracks/` locally.
+

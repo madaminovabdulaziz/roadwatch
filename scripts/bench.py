@@ -1,8 +1,7 @@
-"""Runtime against the 3x budget (RUNBOOK P0.2): decode strategies timed per video.
+"""Runtime against the 3x budget (RUNBOOK P0.2, P0.3): decode strategies and perception, per video.
 
-For every video and decode mode, reads the first `--seconds` of the video and prints wall time per
-video-second ("x", the unit of the harness's 3x budget). Detection, tracking, rules and Part B stages
-join in RUNBOOK P0.3. Decode modes:
+For every video and mode, processes the first `--seconds` of the video and prints wall time per
+video-second ("x", the unit of the harness's 3x budget). Decode modes:
 
   harness          cv2 read() of every native frame: exactly what run_submission.py does for Part B
   opencv_s3        FrameReader(backend="opencv", stride=3): grab() every frame, convert every 3rd
@@ -13,11 +12,18 @@ join in RUNBOOK P0.3. Decode modes:
   parN             nonref_s3_small split into N time chunks decoded by N processes in parallel
                    (--workers; frames stay in the workers, so transfer to the GPU is not included)
 
+Perception modes (--perception; detector loaded once, --imgsz to override the input size):
+
+  part_a           run_perception: decode thread + batched detection + tracking (Part A's path)
+  part_b           Part B's frame path: the harness decodes every native frame, we detect + track
+                   every risk.stride-th one (batch 1); risk features come later and cost little
+  --check-fp16     on CUDA, compares FP16 detections with FP32 on the first seconds of each video
+
 --verify checks, per video, that the fast path's frames are the harness's frames at the same index
 (grayscale thumbnails, best match among neighbouring indices).
 
 Usage: python scripts/bench.py samples/ [--seconds 30] [--modes harness,nonref_s3_small] [--workers 2,4]
-                               [--verify] [--json cache/bench/decode.json]
+                               [--perception] [--imgsz 1280] [--check-fp16] [--verify] [--json out.json]
 """
 
 from __future__ import annotations
@@ -40,8 +46,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from roadwatch.types import VideoMeta  # noqa: E402
-from roadwatch.video import Frame, FrameReader, Size, probe, read_window  # noqa: E402
+from roadwatch.types import Frame, Size, VideoMeta  # noqa: E402
+from roadwatch.video import FrameReader, probe, read_window  # noqa: E402
 
 VIDEO_EXTS = {".mp4", ".MP4"}  # same as run_submission.py
 BUDGET_X = 3.0  # run_submission.py TIME_FACTOR_DEFAULT
@@ -109,6 +115,67 @@ def time_parallel(
     return count, time.perf_counter() - start
 
 
+def time_part_a(path: Path, limit_sec: float, detector) -> tuple[int, float, dict]:
+    from roadwatch.perception.run import run_perception  # torch stays out of the decode-only workers
+
+    stats: dict = {}
+    start = time.perf_counter()
+    run_perception(path, detector=detector, t_end=limit_sec, stats=stats)
+    wall = time.perf_counter() - start
+    notes = {k: stats[k] for k in ("wait_frames_sec", "detect_sec", "track_sec", "tracks")}
+    return stats["frames_detected"], wall, notes
+
+
+def time_part_b(path: Path, meta: VideoMeta, limit_sec: float, detector) -> tuple[int, float, dict]:
+    from roadwatch.config import load_thresholds
+    from roadwatch.perception.tracker import OnlineTracker
+
+    stride = load_thresholds()["risk"]["stride"]
+    tracker = OnlineTracker(meta.fps / stride)
+    count, detect_sec = 0, 0.0
+    start = time.perf_counter()
+    frames = harness_frames(path, meta)
+    try:
+        for idx, t_sec, frame in frames:
+            if t_sec >= limit_sec:
+                break
+            if idx % stride == 0:
+                tick = time.perf_counter()
+                dets = detector.predict([(idx, t_sec, frame)])[0]
+                detect_sec += time.perf_counter() - tick
+                tracker.update(dets)
+                count += 1
+    finally:
+        frames.close()
+    return count, time.perf_counter() - start, {"detect_sec": round(detect_sec, 2)}
+
+
+def check_fp16(path: Path, meta: VideoMeta, fp16, fp32, seconds: float = 3.0) -> dict:
+    """Share of confident FP32 boxes (conf >= 0.3) that FP16 finds with IoU >= 0.9, same class."""
+    total = matched = 0
+    size = fp32.frame_size_for(meta.width, meta.height)
+    for idx, t_sec, img in FrameReader(path, 3, size=size, skip_nonref=True):
+        if t_sec >= seconds:
+            break
+        a = fp32.predict([(idx, t_sec, img)])[0]
+        b = fp16.predict([(idx, t_sec, img)])[0]
+        keep = a.conf >= 0.3
+        for box, cls in zip(a.xyxy[keep], a.cls[keep], strict=True):
+            total += 1
+            same = b.cls == cls
+            if same.any():
+                lt = np.maximum(box[:2], b.xyxy[same, :2])
+                rb = np.minimum(box[2:], b.xyxy[same, 2:])
+                inter = np.clip(rb - lt, 0, None).prod(1)
+                union = np.prod(box[2:] - box[:2]) + np.prod(b.xyxy[same, 2:] - b.xyxy[same, :2], 1) - inter
+                matched += bool((inter / union).max() >= 0.9)
+    return {
+        "fp32_boxes": total,
+        "fp16_matched": matched,
+        "ratio": round(matched / total, 4) if total else 1.0,
+    }
+
+
 def thumbnail(img: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return cv2.resize(gray, THUMB, interpolation=cv2.INTER_AREA).astype(np.float32)
@@ -132,6 +199,12 @@ def verify_alignment(path: Path, meta: VideoMeta, limit_sec: float) -> Counter[i
     return offsets
 
 
+def torch_float16():
+    import torch
+
+    return torch.float16
+
+
 def list_videos(src: Path) -> list[Path]:
     if src.is_file():
         return [src]
@@ -150,6 +223,9 @@ def main() -> int:
     ap.add_argument("--modes", default=",".join(MODES), help=f"comma-separated subset of {list(MODES)}")
     ap.add_argument("--size", type=parse_size, default=(1920, 1080), help="output size for *_small modes")
     ap.add_argument("--workers", default="2,4", help="process counts for the parallel modes ('' = none)")
+    ap.add_argument("--perception", action="store_true", help="also time part_a and part_b (needs weights)")
+    ap.add_argument("--imgsz", type=int, help="detector input size for the perception modes")
+    ap.add_argument("--check-fp16", action="store_true", help="compare FP16 and FP32 detections (CUDA)")
     ap.add_argument("--verify", action="store_true", help="check fast-path frame alignment (first 10 s)")
     ap.add_argument("--json", type=Path, help="also write the results here")
     args = ap.parse_args()
@@ -178,13 +254,29 @@ def main() -> int:
         pools[n] = ProcessPoolExecutor(n, mp_context=multiprocessing.get_context("spawn"))
         list(pools[n].map(warm_up, range(n)))
 
+    detector = fp32 = None
+    if args.perception or args.check_fp16:
+        from roadwatch.perception.detector import Detector, detector_info
+
+        detector = Detector.from_config(imgsz=args.imgsz)
+        env["detector"] = detector_info(detector)
+        print("detector:", env["detector"])
+        if args.check_fp16 and detector.dtype == torch_float16():
+            fp32 = Detector.from_config(imgsz=args.imgsz, half=False)
+    extra_modes = [f"par{n}" for n in workers] + (["part_a", "part_b"] if args.perception else [])
+
     rows = []
     for path in videos:
         meta = probe(path)
         limit = min(args.seconds, meta.duration)
-        for mode in modes + [f"par{n}" for n in workers]:
+        for mode in modes + extra_modes:
+            notes: dict = {}
             if mode in MODES:
                 count, wall = time_mode(MODES[mode](path, meta, args.size), limit)
+            elif mode == "part_a":
+                count, wall, notes = time_part_a(path, limit, detector)
+            elif mode == "part_b":
+                count, wall, notes = time_part_b(path, meta, limit, detector)
             else:
                 n = int(mode[3:])
                 count, wall = time_parallel(pools[n], n, path, limit, args.size)
@@ -196,13 +288,18 @@ def main() -> int:
                 "wall_sec": round(wall, 2),
                 "x_duration": round(wall / limit, 3),
                 "fps": round(count / wall, 1) if wall else 0.0,
+                **notes,
             }
             rows.append(row)
             print(
                 f"{path.name:<22}{mode:<17}{limit:>6.1f}{count:>8}{wall:>9.1f}"
-                f"{row['x_duration']:>8.2f}{row['fps']:>8.1f}",
+                f"{row['x_duration']:>8.2f}{row['fps']:>8.1f}  {notes or ''}",
                 flush=True,
             )
+        if fp32 is not None:
+            result = check_fp16(path, meta, detector, fp32)
+            print(f"{path.name:<22}fp16 vs fp32: {result}", flush=True)
+            rows.append({"video": path.name, "mode": "check_fp16", **result})
         if args.verify:
             offsets = verify_alignment(path, meta, min(10.0, meta.duration))
             total = sum(offsets.values())
@@ -224,6 +321,17 @@ def main() -> int:
             f"\nharness decode (Part B frames): worst {worst:.2f}x of the {BUDGET_X:.0f}x budget "
             f"-> {BUDGET_X - worst:.2f}x left for Part A and our Part B compute"
         )
+    by_video: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r.get("mode") in ("part_a", "part_b"):
+            by_video.setdefault(r["video"], {})[r["mode"]] = r["x_duration"]
+    for video, parts in by_video.items():
+        if len(parts) == 2:
+            total = parts["part_a"] + parts["part_b"]
+            print(
+                f"{video}: perception A {parts['part_a']:.2f}x + B {parts['part_b']:.2f}x = {total:.2f}x "
+                f"of {BUDGET_X:.0f}x -> {BUDGET_X - total:.2f}x left for rules, refinement and risk features"
+            )
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({"env": env, "rows": rows}, indent=1))
