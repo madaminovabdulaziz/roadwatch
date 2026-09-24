@@ -1,0 +1,8 @@
+{
+ "image_size": [
+  3840,
+  2160
+ ],
+ "reference_frame": "configs/reference.jpg",
+ "u_turn_prohibited_everywhere": false
+}
