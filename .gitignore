@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Data and generated outputs (never commit videos or caches)
+samples/
+cache/
+outputs/
+*.parquet
+*.mp4
+*.MP4
+*.mov
+predictions.json
+predictions_dev.json
+report*.json
+
+# Model weights live in the release archive fetched by weights/download.sh
+weights/*
+!weights/download.sh
+!weights/README.md
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
