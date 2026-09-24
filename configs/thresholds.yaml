@@ -11,14 +11,17 @@ video:
   stride_part_a: 3            # process every 3rd frame for Part A (~10 fps at 29.97 fps)
   stride_refine: 1            # boundary refinement reads full frame rate
   max_consecutive_errors: 30  # undecodable packets/frames in a row before a reader gives up
+  skip_nonref: true           # Part A never decodes B-frames (SPEC §12.18)
 
-perception:                   # SPEC §3
-  model: yolo11m              # COCO weights; drop to yolo11s if Part A alone > 0.6x duration
-  imgsz: 960
-  conf: 0.25
+perception:                   # SPEC §3, §12.18-12.21
+  model: yolo11m              # weights/<model>.torchscript + .json (scripts/fetch_weights.py)
+  imgsz: 960                  # network input long side; the 16:9 frames become 960x544
+  conf_min: 0.1               # every detection >= this goes to ByteTrack (its low-score pass)
   nms_iou: 0.7
+  max_det: 300
   half: true                  # FP16 on CUDA; FP32 on CPU
   batch_size: 8
+  prefetch_frames: 32         # decoded frames buffered ahead of the detector (decode thread)
   keep_classes:               # COCO id -> our class name
     0: person
     1: bicycle
@@ -34,7 +37,7 @@ perception:                   # SPEC §3
     19: cow
     24: backpack
     28: suitcase
-  tracker_groups:             # one ByteTrack per group so ids never jump across types
+  tracker_groups:             # one ByteTrack per group so ids never jump across types; NMS per group too
     vehicles: [car, bus, truck]
     two_wheelers: [bicycle, motorcycle]
     persons: [person]
@@ -57,6 +60,8 @@ signal:                       # SPEC §4 / RUNBOOK P1.2
 
 runtime:                      # SPEC §11 and §12 (time budget)
   part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
+  perception_budget_factor: 1.0  # Part A perception paces itself to finish within this x duration
+  max_frame_skip: 6           # when behind schedule, detect only every k-th decoded frame, k <= this
   refine_budget_frac: 0.15    # skip refinement if it would read more than this share of frames
 
 postprocess:                  # SPEC §6; per-class values below override these defaults
