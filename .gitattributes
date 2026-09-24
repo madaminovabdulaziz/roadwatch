@@ -2,3 +2,6 @@
 # where core.autocrlf would otherwise turn them into CRLF and bash fails on "$'\r'".
 *.sh text eol=lf
 Dockerfile text eol=lf
+# Data files read line by line by those scripts (a trailing \r would end up in file names and URLs).
+weights/SHA256SUMS text eol=lf
+kaggle/samples.tsv text eol=lf
