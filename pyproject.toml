@@ -1,0 +1,25 @@
+[project]
+name = "roadwatch"
+version = "0.1.0"
+description = "Traffic event detection and accident anticipation for one fixed road camera (WIUT Hackathon 2026)."
+requires-python = ">=3.10"
+readme = "README.md"
+
+# Dependencies are pinned in requirements.txt (the organizers install from it); nothing is
+# installed from this file. The harness imports solution.py from the repository root.
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+# Organizers' files: never lint or auto-fix them (they must stay byte-identical).
+extend-exclude = ["run_submission.py", "evaluate.py", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# SIM300 misreads `rule.LABEL == label` as a Yoda condition because LABEL looks like a constant.
+ignore = ["SIM300"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

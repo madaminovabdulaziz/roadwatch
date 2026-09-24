@@ -1,0 +1,22 @@
+# Direct runtime dependencies. requirements.txt is the fully pinned lock generated from this file:
+#   uv pip compile requirements.in --universal --python-version 3.10 \
+#     --index-strategy unsafe-best-match --emit-index-url -o requirements.txt
+# (--emit-index-url is required: without it pip on Linux cannot find the +cu126 torch wheels.)
+# torch/torchvision: CUDA 12.6 builds on Linux (run on NVIDIA driver >= 525, include T4 sm_75 kernels).
+# The default PyPI torch builds for newer versions need CUDA 13 / driver >= 580, which we avoid (SPEC §12).
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+torch==2.8.0+cu126 ; sys_platform == "linux"
+torch==2.8.0 ; sys_platform != "linux"
+torchvision==0.23.0+cu126 ; sys_platform == "linux"
+torchvision==0.23.0 ; sys_platform != "linux"
+
+# Headless OpenCV only: the harness imports cv2, and non-headless builds need libGL (SPEC §12).
+opencv-python-headless==4.12.0.88
+numpy==2.2.6
+scipy==1.15.3
+pandas==2.3.3
+pyarrow==21.0.0
+PyYAML==6.0.3
+supervision==0.30.5
+av==15.1.0

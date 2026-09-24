@@ -1,0 +1,248 @@
+# RoadWatch tunables — every number the pipeline uses lives here (CLAUDE.md rule), never in code.
+# Units unless stated: seconds, metres, m/s, m/s^2, degrees, degrees/s. Source of each default: docs/SPEC.md.
+#
+# Class enable policy (SPEC §7): a class is emitted only if `enabled: true` here AND the scene has the
+# geometry it needs. Every class starts disabled; flip one on only after its rule passes the §7 checks.
+# Predicting a class that is absent from the test set adds a class with F1 = 0 to Score A.
+
+seed: 0
+
+video:
+  stride_part_a: 3            # process every 3rd frame for Part A (~10 fps at 29.97 fps)
+  stride_refine: 1            # boundary refinement reads full frame rate
+
+perception:                   # SPEC §3
+  model: yolo11m              # COCO weights; drop to yolo11s if Part A alone > 0.6x duration
+  imgsz: 960
+  conf: 0.25
+  nms_iou: 0.7
+  half: true                  # FP16 on CUDA; FP32 on CPU
+  batch_size: 8
+  keep_classes:               # COCO id -> our class name
+    0: person
+    1: bicycle
+    2: car
+    3: motorcycle
+    5: bus
+    7: truck
+    14: bird
+    15: cat
+    16: dog
+    17: horse
+    18: sheep
+    19: cow
+    24: backpack
+    28: suitcase
+  tracker_groups:             # one ByteTrack per group so ids never jump across types
+    vehicles: [car, bus, truck]
+    two_wheelers: [bicycle, motorcycle]
+    persons: [person]
+    others: [bird, cat, dog, horse, sheep, cow, backpack, suitcase]
+  bytetrack:
+    track_activation_threshold: 0.25
+    lost_track_buffer_sec: 1.0
+    minimum_matching_threshold: 0.8
+
+kinematics:                   # SPEC §3
+  savgol_window_sec: 1.2      # offline smoothing (Part A)
+  savgol_order: 2
+  ema_alpha: 0.5              # online smoothing (Part B)
+  min_track_sec: 1.0          # shorter tracks get kin_valid = False
+  persistence_max_gap_sec: 3.0
+  persistence_max_dist_m: 2.0
+
+signal:                       # SPEC §4 / RUNBOOK P1.2
+  median_sec: 0.5
+
+runtime:                      # SPEC §11 and §12 (time budget)
+  part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
+  refine_budget_frac: 0.15    # skip refinement if it would read more than this share of frames
+
+postprocess:                  # SPEC §6; per-class values below override these defaults
+  merge_gap: 1.0
+  min_dur: 0.5
+  refine_window_sec: 2.0
+  refine_classes: [accident, red_light, solid_line_crossing, failure_to_yield, near_miss]
+  round_decimals: 3
+
+classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
+  accident:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.8
+    params:
+      contact_dist_m: 1.5
+      shock_window_sec: 0.6
+      shock_decel_mps2: 6.0
+      shock_heading_deg: 30.0
+      shock_heading_window_sec: 1.0
+      confirm_stopped_sec: 3.0
+      single_speed_before_mps: 8.0
+      single_speed_after_mps: 1.0
+      single_window_sec: 1.5
+      end_speed_mps: 0.3
+      end_hold_sec: 2.0
+
+  near_miss:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      max_ttc_sec: 1.5
+      min_closing_speed_mps: 3.0
+      evasive_decel_mps2: 4.0
+      evasive_yaw_rate_dps: 25.0
+      min_separation_m: 1.5
+      no_accident_within_sec: 3.0
+      onset_decel_mps2: 2.0
+      end_ttc_sec: 3.0
+
+  red_light:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      red_stable_sec: 0.5
+      min_after_red_onset_sec: 0.3
+
+  wrong_way:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      min_speed_mps: 2.0
+      max_cos_to_lane: -0.5
+      min_sec: 1.0
+
+  illegal_u_turn:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      min_heading_change_deg: 150.0
+      window_sec: 12.0
+      min_start_speed_mps: 1.0
+      start_yaw_rate_dps: 10.0
+      end_heading_tol_deg: 15.0
+      end_stable_sec: 1.0
+
+  stopped_vehicle:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 2.0
+    min_dur: 10.0
+    params:
+      stop_speed_mps: 0.5
+      min_stopped_sec: 10.0
+      resume_speed_mps: 1.0
+      resume_hold_sec: 1.0
+      queue_upstream_m: 30.0
+      queue_ahead_m: 12.0
+
+  jaywalking:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 1.0
+    params:
+      min_sec: 1.0
+      rider_box_expand: 0.2
+      rider_iou: 0.3
+      in_vehicle_frac: 0.7
+
+  failure_to_yield:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      min_vehicle_speed_mps: 1.5
+      ped_edge_dist_m: 1.0
+
+  illegal_turn:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      start_yaw_rate_dps: 10.0
+      end_heading_tol_deg: 15.0
+      end_stable_sec: 1.0
+
+  solid_line_crossing:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      min_lateral_m: 1.0
+
+  stop_line:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      stop_speed_mps: 0.5
+      stopped_sec: 1.0
+      past_line_m: 0.3
+
+  congestion:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 5.0
+    min_dur: 20.0
+    params:
+      step_sec: 1.0
+      max_mean_speed_mps: 1.5
+      min_vehicles_per_lane: 2
+      min_sustain_sec: 20.0
+      long_sec: 60.0
+      green_persist_sec: 10.0
+      clear_speed_mps: 3.0
+      clear_hold_sec: 5.0
+
+  road_obstacle:
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      coco_min_sec: 1.0
+      background_window_sec: 30.0
+      min_area_m2: 0.3
+      box_expand: 0.2
+      static_sec: 3.0
+      gone_sec: 2.0
+
+  fire_smoke:                 # stays disabled unless an open fire/smoke model is shipped (SPEC §5)
+    enabled: false
+    min_score: 0.5
+    merge_gap: 1.0
+    min_dur: 0.5
+    params:
+      end_pad_sec: 1.0
+
+risk:                         # SPEC §8 (Part B)
+  stride: 3
+  max_pair_dist_m: 25.0
+  min_closing_speed_mps: 1.0
+  ttc_scale_sec: 1.5          # g(ttc) = exp(-ttc / ttc_scale_sec)
+  closing_speed_norm_mps: 10.0
+  decel_norm_mps2: 8.0
+  weights:
+    bias: -5.0
+    ttc: 5.0
+    closing_speed: 1.5
+    decel: 2.0
+    wrong_way: 1.0
+    red_light: 0.8
+    ped_ttc: 3.0
+  ema_alpha: 0.4
+  hold_sec: 1.0               # once >= threshold, hold for at least this long
+  threshold: 0.5
