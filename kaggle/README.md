@@ -7,24 +7,27 @@ cores, against their 8. Decode timings here are therefore pessimistic.
 
 1. Kaggle account with a **verified phone number** (Settings → Phone verification). Without it there
    is no GPU and no internet in notebooks.
-2. GitHub fine-grained token for the private repo: GitHub → Settings → Developer settings →
-   Fine-grained tokens → Generate. Repository access: *Only select repositories* → `roadwatch`;
-   Permissions → Contents: *Read-only*; expiry 7 days.
+2. GitHub fine-grained token for the private repo (https://github.com/settings/personal-access-tokens/new):
+   Repository access → *Only select repositories* → `roadwatch`. Then under Permissions click
+   **Add permissions → Contents** and set it to *Read-only*; without it the clone fails with a misleading
+   "Write access to repository not granted" 403. Expiry 7 days.
 3. In the notebook: Add-ons → Secrets → add `GITHUB_TOKEN` with that token and attach it to the notebook.
 4. Notebook settings: Accelerator **GPU T4**, Internet **On**.
 
-## Cell 1: clone (token stays out of saved output)
+## Cell 1: clone (the token never appears in output, even on failure)
 
 ```python
 from kaggle_secrets import UserSecretsClient
 import subprocess
 
 token = UserSecretsClient().get_secret("GITHUB_TOKEN")
+repo = "github.com/madaminovabdulaziz/roadwatch.git"
 subprocess.run(["rm", "-rf", "/tmp/roadwatch"], check=True)
-subprocess.run(["git", "clone", "-q", f"https://{token}@github.com/madaminovabdulaziz/roadwatch.git",
-                "/tmp/roadwatch"], check=True)
-subprocess.run(["git", "-C", "/tmp/roadwatch", "remote", "set-url", "origin",
-                "https://github.com/madaminovabdulaziz/roadwatch.git"], check=True)
+r = subprocess.run(["git", "clone", "-q", f"https://x-access-token:{token}@{repo}", "/tmp/roadwatch"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    raise RuntimeError("git clone failed:\n" + r.stderr.replace(token, "***"))
+subprocess.run(["git", "-C", "/tmp/roadwatch", "remote", "set-url", "origin", f"https://{repo}"], check=True)
 print(subprocess.run(["git", "-C", "/tmp/roadwatch", "log", "--oneline", "-3"],
                      capture_output=True, text=True).stdout)
 ```
