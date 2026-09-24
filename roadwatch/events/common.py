@@ -11,6 +11,10 @@ Rules receive the TrackTable after `features.add_kinematics` (one row per track 
   NaN outside lanes or for lanes without a direction.
 - `lane_signal(scene)` / `signal_states(ctx, sid, t)`: the signal id of each lane and its state at times
   `t` ("unknown" without a timeline).
+- `crossings(t, pts, line, gap)`: steps of one track crossing a line, with interpolated times.
+- `past_line_m(scene, line, pts, lane_dir)`: signed metres beyond a line in the lane direction.
+- `dist_to_polygon_m(scene, polygon, pts)`: metres to a polygon's boundary (0 inside).
+- `stable_from(t, heading, start, tol, hold)`: first index whose heading then holds within `tol`.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import pandas as pd
 from roadwatch.config import load_thresholds
 from roadwatch.events.base import VideoContext
 from roadwatch.scene.light import UNKNOWN, state_at
-from roadwatch.scene.scene import Scene
+from roadwatch.scene.scene import Scene, points_in_polygon, segments_cross
 
 _DIR_PROBE_PX = 20.0  # image step along the lane direction used to measure it in metres
 
@@ -96,3 +100,62 @@ def signal_states(ctx: VideoContext, sid: str | None, t: np.ndarray) -> np.ndarr
     if not segments:
         return np.full(len(t), UNKNOWN, dtype=object)
     return np.array([state_at(segments, float(x)) for x in t], dtype=object)
+
+
+def crossings(t: np.ndarray, pts: np.ndarray, line: np.ndarray, gap: float) -> list[tuple[int, float]]:
+    """Steps k-1 -> k of one track whose point crosses the 2-point `line`, with interpolated times.
+
+    `pts` are image points (N, 2) of consecutive samples; steps longer than `gap` are ignored. The time
+    is interpolated linearly by the signed distances of the two samples to the line.
+    """
+    if len(t) < 2:
+        return []
+    ok = np.diff(t) <= gap
+    hit = np.flatnonzero(ok & segments_cross(line, pts[:-1], pts[1:])) + 1
+    a, b = np.asarray(line, dtype=np.float64).reshape(2, 2)
+    normal = np.array([-(b - a)[1], (b - a)[0]])
+    out = []
+    for k in hit:
+        d0, d1 = float((pts[k - 1] - a) @ normal), float((pts[k] - a) @ normal)
+        frac = d0 / (d0 - d1) if d0 != d1 else 1.0
+        out.append((int(k), float(t[k - 1] + frac * (t[k] - t[k - 1]))))
+    return out
+
+
+def past_line_m(scene: Scene, line: np.ndarray, pts_img: np.ndarray, lane_dir_img: np.ndarray) -> np.ndarray:
+    """Signed distance in metres of image points beyond `line`, positive in the lane direction."""
+    a, b = scene.to_world(np.asarray(line, dtype=np.float64).reshape(2, 2))
+    n = np.array([-(b - a)[1], (b - a)[0]])
+    n /= np.linalg.norm(n)
+    mid = (np.asarray(line, dtype=np.float64).reshape(2, 2)).mean(axis=0)
+    ahead = scene.to_world(np.array([mid + lane_dir_img * _DIR_PROBE_PX]))[0] - scene.to_world(mid[None])[0]
+    if n @ ahead < 0:
+        n = -n
+    return (scene.to_world(pts_img) - a) @ n
+
+
+def dist_to_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
+    """Distance in metres from image points to a polygon's boundary (0 inside), on the road plane."""
+    poly = scene.to_world(np.asarray(polygon_img, dtype=np.float64))
+    p = scene.to_world(pts_img)
+    best = np.full(len(p), np.inf)
+    for a, b in zip(poly, np.roll(poly, -1, axis=0), strict=True):
+        ab = b - a
+        u = np.clip(((p - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
+        best = np.minimum(best, np.linalg.norm(p - (a + u[:, None] * ab), axis=1))
+    best[points_in_polygon(p, poly)] = 0.0
+    return best
+
+
+def stable_from(t: np.ndarray, heading: np.ndarray, start: int, tol: float, hold: float) -> int | None:
+    """First index >= start from which the heading stays within `tol` degrees for `hold` seconds."""
+    for i in range(start, len(t)):
+        if not np.isfinite(heading[i]):
+            continue
+        if t[-1] - t[i] < hold:
+            return None  # not enough track left to confirm
+        j = np.searchsorted(t, t[i] + hold, side="right")
+        diff = (heading[i:j] - heading[i] + 180.0) % 360.0 - 180.0
+        if np.all(np.abs(diff[np.isfinite(diff)]) <= tol):
+            return i
+    return None
