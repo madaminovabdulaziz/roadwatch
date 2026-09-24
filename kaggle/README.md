@@ -73,3 +73,16 @@ os.environ["GITHUB_TOKEN"] = UserSecretsClient().get_secret("GITHUB_TOKEN")
 
 Download `/kaggle/working/tracks/*.parquet` + `*.json` (Output panel) into `cache/tracks/` locally.
 
+## Cell 5: the organizers' run on the samples (RUNBOOK P0.4, P3.2)
+
+Run after Cell 4 (venv, samples and weights in place). This is exactly what the organizers do, and the
+harness log gives the real budget use per video.
+
+```python
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python run_submission.py --videos /tmp/samples --out /kaggle/working/predictions_samples.json --team roadwatch
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python evaluate.py --pred /kaggle/working/predictions_samples.json --validate-only
+import json
+for video, log in json.load(open("/kaggle/working/predictions_samples.json"))["log"].items():
+    print(f"{video}: {log['total_sec'] / log['duration']:.2f}x duration (budget 3.00x)")
+```
+
