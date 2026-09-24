@@ -1,0 +1,14 @@
+# Grid for scripts/tune.py (RUNBOOK P1.4 / P2.5): class -> {parameter: [candidate values]}.
+# A parameter is looked up in classes.<class>.params, else in classes.<class> (min_score, merge_gap,
+# min_dur). Keep grids small and values round: the dev set is a few videos, so a fine grid overfits.
+wrong_way:
+  min_speed_mps: [1.5, 2.0, 3.0]
+  min_sec: [0.5, 1.0, 1.5]
+stopped_vehicle:
+  stop_speed_mps: [0.3, 0.5, 1.0]
+  min_stopped_sec: [8.0, 10.0]
+jaywalking:
+  min_sec: [0.5, 1.0, 2.0]
+congestion:
+  max_mean_speed_mps: [1.0, 1.5, 2.5]
+  min_sustain_sec: [15.0, 20.0, 30.0]
