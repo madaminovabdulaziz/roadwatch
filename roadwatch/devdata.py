@@ -13,6 +13,8 @@ Contract:
   (the samples may only live on Kaggle).
 - `cached_signals(stem, cache_dir, scene)` returns the cached signal timeline, or {} when it was measured
   with other lamp boxes than the current scene's.
+- `diff_predictions(a, b)` lists the differences between two harness outputs (determinism and
+  reproducibility checks, RUNBOOK P3.1/P3.3).
 """
 
 from __future__ import annotations
@@ -175,3 +177,24 @@ def video_meta(name: str, videos_dir: Path, cache_dir: Path) -> VideoMeta | None
     if path.exists():
         return probe(path)
     return cached_meta(Path(name).stem, cache_dir)
+
+
+def diff_predictions(a: dict[str, Any], b: dict[str, Any], risk_tol: float = 1e-6) -> list[str]:
+    """Differences between two harness outputs: events must match exactly, risk within `risk_tol`."""
+    out: list[str] = []
+    va, vb = a.get("videos", {}), b.get("videos", {})
+    for video in sorted(set(va) | set(vb)):
+        if video not in va or video not in vb:
+            out.append(f"{video}: only in {'the first' if video in va else 'the second'} run")
+            continue
+        ea, eb = va[video].get("events", []), vb[video].get("events", [])
+        if ea != eb:
+            out.append(f"{video}: events differ ({len(ea)} vs {len(eb)})")
+        ra, rb = va[video].get("risk", []), vb[video].get("risk", [])
+        if len(ra) != len(rb):
+            out.append(f"{video}: risk lengths differ ({len(ra)} vs {len(rb)})")
+        elif ra:
+            worst = max(max(abs(x[0] - y[0]), abs(x[1] - y[1])) for x, y in zip(ra, rb, strict=True))
+            if worst > risk_tol:
+                out.append(f"{video}: risk differs by up to {worst:.2g}")
+    return out

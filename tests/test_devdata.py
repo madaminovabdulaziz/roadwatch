@@ -182,3 +182,25 @@ def test_cached_signals_only_for_the_same_lamp_boxes(tmp_path: Path) -> None:
     moved = [{**boxes[0], "red": [1, 0, 5, 5]}]
     assert cached_signals("a", tmp_path, Scene({"signals": moved})) == {}
     assert cached_signals("missing", tmp_path, Scene()) == {}
+
+
+def test_diff_predictions() -> None:
+    from roadwatch.devdata import diff_predictions
+
+    a = {"videos": {"v.mp4": {"events": [[1.0, 2.0, "jaywalking"]], "risk": [[0.0, 0.1], [0.1, 0.2]]}}}
+    assert diff_predictions(a, json.loads(json.dumps(a))) == []
+    b = {"videos": {"v.mp4": {"events": [], "risk": [[0.0, 0.1], [0.1, 0.25]]}, "w.mp4": {"events": []}}}
+    problems = " | ".join(diff_predictions(a, b))
+    assert (
+        "events differ" in problems and "risk differs" in problems and "w.mp4: only in the second" in problems
+    )
+
+
+def test_determinism_and_reproduction_scripts(tmp_path: Path, tiny_video: Path) -> None:
+    r = run("check_determinism.py", str(tiny_video.parent), "--keep", str(tmp_path / "det"))
+    assert r.returncode == 0 and "IDENTICAL" in r.stdout, r.stdout + r.stderr
+    out = tmp_path / "pred.json"
+    r = run("make_predictions_samples.py", str(tiny_video.parent), "--out", str(out))
+    assert r.returncode == 0 and out.exists(), r.stdout + r.stderr
+    r = run("make_predictions_samples.py", str(tiny_video.parent), "--out", str(out), "--check")
+    assert r.returncode == 0 and "REPRODUCED" in r.stdout, r.stdout + r.stderr
