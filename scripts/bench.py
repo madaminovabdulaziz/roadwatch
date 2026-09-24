@@ -1,17 +1,234 @@
-"""Runtime against the 3x budget: decode, detect, track, rules, refine, Part B.
+"""Runtime against the 3x budget (RUNBOOK P0.2): decode strategies timed per video.
 
-Reports seconds per video-second per stage; target total <= 1.0x.
+For every video and decode mode, reads the first `--seconds` of the video and prints wall time per
+video-second ("x", the unit of the harness's 3x budget). Detection, tracking, rules and Part B stages
+join in RUNBOOK P0.3. Decode modes:
 
-Usage: python scripts/bench.py samples/
+  harness          cv2 read() of every native frame: exactly what run_submission.py does for Part B
+  opencv_s3        FrameReader(backend="opencv", stride=3): grab() every frame, convert every 3rd
+  pyav_s1          FrameReader(stride=1): PyAV, every frame converted at native size
+  pyav_s3          FrameReader(stride=3): PyAV decodes every frame, converts every 3rd
+  nonref_s3        FrameReader(stride=3, skip_nonref=True): B-frames are never decoded
+  nonref_s3_small  as nonref_s3, converted straight to --size (the planned Part A input)
+  parN             nonref_s3_small split into N time chunks decoded by N processes in parallel
+                   (--workers; frames stay in the workers, so transfer to the GPU is not included)
+
+--verify checks, per video, that the fast path's frames are the harness's frames at the same index
+(grayscale thumbnails, best match among neighbouring indices).
+
+Usage: python scripts/bench.py samples/ [--seconds 30] [--modes harness,nonref_s3_small] [--workers 2,4]
+                               [--verify] [--json cache/bench/decode.json]
 """
 
 from __future__ import annotations
 
+import argparse
+import json
+import multiprocessing
+import os
+import platform
 import sys
+import time
+from collections import Counter
+from collections.abc import Callable, Iterator
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
+import av
+import cv2
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from roadwatch.types import VideoMeta  # noqa: E402
+from roadwatch.video import Frame, FrameReader, Size, probe, read_window  # noqa: E402
+
+VIDEO_EXTS = {".mp4", ".MP4"}  # same as run_submission.py
+BUDGET_X = 3.0  # run_submission.py TIME_FACTOR_DEFAULT
+THUMB = (160, 90)
+VERIFY_RADIUS = 3  # neighbouring indices searched for the best-matching harness frame
+
+
+def harness_frames(path: Path, meta: VideoMeta) -> Iterator[Frame]:
+    """Decode exactly like run_submission.run_risk: cv2 read() of every frame, t = idx / fps."""
+    cap = cv2.VideoCapture(str(path))
+    idx = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                return
+            yield idx, idx / meta.fps, frame
+            idx += 1
+    finally:
+        cap.release()
+
+
+MODES: dict[str, Callable[[Path, VideoMeta, Size], Iterator[Frame]]] = {
+    "harness": lambda path, meta, size: harness_frames(path, meta),
+    "opencv_s3": lambda path, meta, size: iter(FrameReader(path, 3, backend="opencv")),
+    "pyav_s1": lambda path, meta, size: iter(FrameReader(path, 1)),
+    "pyav_s3": lambda path, meta, size: iter(FrameReader(path, 3)),
+    "nonref_s3": lambda path, meta, size: iter(FrameReader(path, 3, skip_nonref=True)),
+    "nonref_s3_small": lambda path, meta, size: iter(FrameReader(path, 3, size=size, skip_nonref=True)),
+}
+
+
+def time_mode(frames: Iterator[Frame], limit_sec: float) -> tuple[int, float]:
+    """Consume frames up to `limit_sec`; return (frames yielded, wall seconds)."""
+    start = time.perf_counter()
+    count = 0
+    try:
+        for _, t_sec, _ in frames:
+            if t_sec >= limit_sec:
+                break
+            count += 1
+    finally:
+        close = getattr(frames, "close", None)
+        if close:
+            close()
+    return count, time.perf_counter() - start
+
+
+def count_chunk(path: Path, t0: float, t1: float, size: Size) -> int:
+    """Worker: decode one time chunk the nonref_s3_small way and count its frames."""
+    return sum(1 for _ in read_window(path, t0, t1, 3, size=size, skip_nonref=True))
+
+
+def warm_up(_: int) -> None:
+    """Worker start-up (imports) happens before timing; a real pipeline keeps its workers alive."""
+
+
+def time_parallel(
+    pool: ProcessPoolExecutor, workers: int, path: Path, limit_sec: float, size: Size
+) -> tuple[int, float]:
+    edges = [limit_sec * i / workers for i in range(workers + 1)]
+    start = time.perf_counter()
+    futures = [pool.submit(count_chunk, path, t0, t1, size) for t0, t1 in zip(edges, edges[1:], strict=False)]
+    count = sum(f.result() for f in futures)
+    return count, time.perf_counter() - start
+
+
+def thumbnail(img: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return cv2.resize(gray, THUMB, interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def verify_alignment(path: Path, meta: VideoMeta, limit_sec: float) -> Counter[int]:
+    """Histogram of (best-matching harness index - reported index) for the skip_nonref fast path."""
+    reference: dict[int, np.ndarray] = {}
+    for idx, t_sec, img in harness_frames(path, meta):
+        if t_sec >= limit_sec:
+            break
+        reference[idx] = thumbnail(img)
+    offsets: Counter[int] = Counter()
+    for idx, t_sec, img in FrameReader(path, 3, skip_nonref=True):
+        if t_sec >= limit_sec:
+            break
+        thumb = thumbnail(img)
+        candidates = [i for i in range(idx - VERIFY_RADIUS, idx + VERIFY_RADIUS + 1) if i in reference]
+        best = min(candidates, key=lambda i: float(np.abs(reference[i] - thumb).mean()))
+        offsets[best - idx] += 1
+    return offsets
+
+
+def list_videos(src: Path) -> list[Path]:
+    if src.is_file():
+        return [src]
+    return sorted(p for p in src.iterdir() if p.suffix in VIDEO_EXTS)
+
+
+def parse_size(text: str) -> Size:
+    width, height = text.lower().split("x")
+    return int(width), int(height)
 
 
 def main() -> int:
-    raise NotImplementedError("scripts/bench.py lands in RUNBOOK P0.2")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("videos", type=Path, help="folder of .mp4 files, or one .mp4")
+    ap.add_argument("--seconds", type=float, default=30.0, help="decode this much of each video per mode")
+    ap.add_argument("--modes", default=",".join(MODES), help=f"comma-separated subset of {list(MODES)}")
+    ap.add_argument("--size", type=parse_size, default=(1920, 1080), help="output size for *_small modes")
+    ap.add_argument("--workers", default="2,4", help="process counts for the parallel modes ('' = none)")
+    ap.add_argument("--verify", action="store_true", help="check fast-path frame alignment (first 10 s)")
+    ap.add_argument("--json", type=Path, help="also write the results here")
+    args = ap.parse_args()
+
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    unknown = [m for m in modes if m not in MODES]
+    if unknown:
+        ap.error(f"unknown modes {unknown}; choose from {list(MODES)}")
+    videos = list_videos(args.videos)
+    if not videos:
+        ap.error(f"no .mp4 files in {args.videos}")
+
+    env = {
+        "platform": platform.platform(),
+        "cpu_count": os.cpu_count(),
+        "opencv": cv2.__version__,
+        "opencv_threads": cv2.getNumThreads(),
+        "pyav": av.__version__,
+    }
+    print("env:", ", ".join(f"{k}={v}" for k, v in env.items()))
+    print(f"{'video':<22}{'mode':<17}{'secs':>6}{'frames':>8}{'wall s':>9}{'x dur':>8}{'fps':>8}")
+
+    workers = [int(n) for n in args.workers.split(",") if n.strip()]
+    pools = {}
+    for n in workers:
+        pools[n] = ProcessPoolExecutor(n, mp_context=multiprocessing.get_context("spawn"))
+        list(pools[n].map(warm_up, range(n)))
+
+    rows = []
+    for path in videos:
+        meta = probe(path)
+        limit = min(args.seconds, meta.duration)
+        for mode in modes + [f"par{n}" for n in workers]:
+            if mode in MODES:
+                count, wall = time_mode(MODES[mode](path, meta, args.size), limit)
+            else:
+                n = int(mode[3:])
+                count, wall = time_parallel(pools[n], n, path, limit, args.size)
+            row = {
+                "video": path.name,
+                "mode": mode,
+                "seconds": round(limit, 2),
+                "frames": count,
+                "wall_sec": round(wall, 2),
+                "x_duration": round(wall / limit, 3),
+                "fps": round(count / wall, 1) if wall else 0.0,
+            }
+            rows.append(row)
+            print(
+                f"{path.name:<22}{mode:<17}{limit:>6.1f}{count:>8}{wall:>9.1f}"
+                f"{row['x_duration']:>8.2f}{row['fps']:>8.1f}",
+                flush=True,
+            )
+        if args.verify:
+            offsets = verify_alignment(path, meta, min(10.0, meta.duration))
+            total = sum(offsets.values())
+            status = "OK" if set(offsets) == {0} else "MISALIGNED"
+            print(
+                f"{path.name:<22}verify nonref vs harness: {offsets[0]}/{total} frames at offset 0 "
+                f"{dict(offsets)} -> {status}",
+                flush=True,
+            )
+            rows.append({"video": path.name, "mode": "verify", "offsets": dict(offsets), "status": status})
+
+    for pool in pools.values():
+        pool.shutdown()
+
+    harness = [r["x_duration"] for r in rows if r.get("mode") == "harness"]
+    if harness:
+        worst = max(harness)
+        print(
+            f"\nharness decode (Part B frames): worst {worst:.2f}x of the {BUDGET_X:.0f}x budget "
+            f"-> {BUDGET_X - worst:.2f}x left for Part A and our Part B compute"
+        )
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps({"env": env, "rows": rows}, indent=1))
+        print(f"wrote {args.json}")
+    return 0
 
 
 if __name__ == "__main__":

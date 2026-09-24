@@ -16,9 +16,7 @@ WORK="${WORK:-/tmp/rw-check}"
 PY="$VENV/bin/python"
 cd "$REPO"
 
-# Kaggle injects its own paths (their sitecustomize imports wrapt); a clean machine has none.
-# Kaggle's python3 also lacks ensurepip, so the venv falls back to virtualenv below.
-unset PYTHONPATH
+unset PYTHONPATH  # see setup_venv.sh
 
 echo "== machine"
 python3 --version
@@ -28,12 +26,7 @@ free -g | head -2
 df -h /tmp | tail -1
 
 echo "== install: fresh venv, plain pip (organizers' path)"
-python3 -m venv "$VENV" || { python3 -m pip install -q virtualenv && python3 -m virtualenv -q "$VENV"; }
-"$PY" -m pip install -q --upgrade pip
-SECONDS=0
-"$PY" -m pip install -q -r requirements.txt
-echo "requirements.txt installed in ${SECONDS}s"
-"$PY" -m pip install -q -r requirements-dev.txt
+VENV="$VENV" bash "$REPO/kaggle/setup_venv.sh"
 
 echo "== torch / CUDA"
 "$PY" - <<'EOF'

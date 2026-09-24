@@ -40,3 +40,18 @@ print(subprocess.run(["git", "-C", "/tmp/roadwatch", "log", "--oneline", "-3"],
 
 It installs `requirements.txt` into a fresh venv with plain pip, checks CUDA on the T4, runs the
 tests, and times the official harness on a synthetic clip in the sample format. It takes about 5–10 minutes.
+
+## Cell 3: download the samples and benchmark decoding (RUNBOOK P0.2)
+
+Re-run Cell 1 first to get the latest code. The samples come from our own Drive copies listed in
+`kaggle/samples.tsv`: the organizers' shared links hit Drive's download quota, so each teammate
+made a copy (Drive → Shared with me → right-click → Make a copy) shared as "Anyone with the link".
+
+```python
+!bash /tmp/roadwatch/kaggle/setup_venv.sh && bash /tmp/roadwatch/kaggle/fetch_samples.sh
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python scripts/bench.py /tmp/samples --seconds 30 --verify --json /kaggle/working/bench_decode.json
+```
+
+The bench prints every decode mode as "x dur" (wall time / video time, the unit of the 3x budget)
+and checks that the fast path's frames line up with the harness's frames.
+
