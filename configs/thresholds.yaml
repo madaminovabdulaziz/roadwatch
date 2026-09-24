@@ -268,14 +268,14 @@ risk:                         # SPEC §8 (Part B)
   ttc_scale_sec: 1.5          # g(ttc) = exp(-ttc / ttc_scale_sec)
   closing_speed_norm_mps: 10.0
   decel_norm_mps2: 8.0
-  weights:
-    bias: -5.0
-    ttc: 5.0
-    closing_speed: 1.5
+  weights:                    # solved from SPEC §8's targets, then rounded (SPEC §12.32):
+    bias: -3.0                # calm traffic -> sigmoid(-3) = 0.047 (< 0.05)
+    ttc: 5.5                  # TTC 1.0 s at 6 m/s closing -> 0.60; TTC 3 s -> 0.16
+    closing_speed: 1.0
     decel: 2.0
     wrong_way: 1.0
-    red_light: 0.8
-    ped_ttc: 3.0
+    red_light: 0.8            # a vehicle moving in a lane whose signal is red
+    ped_ttc: 5.0
   ema_alpha: 0.4
   hold_sec: 1.0               # once >= threshold, hold for at least this long
   threshold: 0.5

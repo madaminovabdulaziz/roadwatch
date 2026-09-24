@@ -105,6 +105,10 @@ def test_official_harness_writes_valid_predictions(tiny_video: Path, tmp_path: P
             str(out),
             "--team",
             "roadwatch",
+            # a 2 s clip cannot absorb the one-off model load that counts against the first video's
+            # budget; this test checks plumbing and format, scripts/bench.py measures time on real clips
+            "--time-factor",
+            "100",
         ],
         cwd=REPO_ROOT,
         capture_output=True,
