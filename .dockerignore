@@ -1,0 +1,18 @@
+# Keep the build context small: no envs, videos, caches, web or demo sources.
+.git/
+.venv/
+.venv-export/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+samples/
+cache/
+outputs/
+web/
+demo/
+*.parquet
+*.mp4
+*.MP4
+*.mov
+predictions*.json
+weights/*.part
