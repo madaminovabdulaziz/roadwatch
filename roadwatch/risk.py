@@ -8,6 +8,10 @@ Contract:
   `reset()`; `step()` touches no file.
 - Heavy work runs when at least `risk.stride` frames passed since the last processed one (frame index
   = round(t * fps), so the dev flag `--risk-stride` works too); other frames return the previous score.
+- Time safety (SPEC §12.33): if the wall time spent inside step() exceeds
+  `risk.budget_factor * t_sec + risk.budget_slack_sec`, processing slots are skipped (previous score)
+  until it is back under. Over the 3x budget the whole video would score empty, Part A included; on a
+  machine fast enough this never triggers, so normal runs stay deterministic.
 
 Per processed frame: resize to the detector size -> detect -> own OnlineTracker -> causal kinematics
 (EMA, the same update as features' online mode) -> features (`risk_features`) -> score (`risk_score`):
@@ -21,6 +25,7 @@ is never loaded (no GPU time, no model-load cost against the first video's budge
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -182,6 +187,8 @@ class RiskCore:
         self.ema: float | None = None
         self.hold_until = -math.inf
         self.score = 0.0
+        self.spent = 0.0  # wall seconds inside step()'s processing
+        self.skipped = 0
         if not self.metric:
             # no metric features are possible: the score is the constant bias, so skip perception
             self.score = risk_score(risk_features(pd.DataFrame(), self.scene, set(), self.cfg), self.cfg)
@@ -206,6 +213,16 @@ class RiskCore:
         if not self.metric or idx - self.last_idx < self.cfg["stride"]:
             return self.score
         self.last_idx = idx
+        if self.spent > self.cfg["budget_factor"] * t_sec + self.cfg["budget_slack_sec"]:
+            self.skipped += 1
+            return self.score  # behind schedule: keep the budget for the harness and Part A
+        started = time.perf_counter()
+        try:
+            return self._process(frame, t_sec, idx)
+        finally:
+            self.spent += time.perf_counter() - started
+
+    def _process(self, frame: np.ndarray, t_sec: float, idx: int) -> float:
         small = cv2.resize(frame, self.det_size, interpolation=cv2.INTER_AREA)
         dets = self.detector.predict([(idx, t_sec, small)], native_size=self.native)[0]
         tracks: FrameTracks = self.tracker.update(dets)

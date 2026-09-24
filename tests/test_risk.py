@@ -191,3 +191,21 @@ def test_real_detector_path_returns_floats() -> None:
     core.reset({"video_id": "v.mp4", "fps": FPS, "width": 640, "height": 360, "n_frames": 10})
     frame = np.zeros((360, 640, 3), np.uint8)
     assert all(0.0 <= core.step(frame, i / FPS) <= 1.0 for i in range(10))
+
+
+def test_pacing_skips_work_when_behind_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
+    import roadwatch.risk as risk_mod
+
+    clock = iter(x * 0.5 for x in range(10_000))  # every processed step appears to take 0.5 s
+    monkeypatch.setattr(risk_mod.time, "perf_counter", lambda: next(clock))
+    calls = []
+    fake = FakeDetector(lambda t: [])
+    original = fake.predict
+    fake.predict = lambda *a, **k: calls.append(1) or original(*a, **k)
+    core = RiskCore(detector=fake, scene=SCENE)
+    core.reset({"video_id": "v.mp4", "fps": FPS, "width": 1000, "height": 1000, "n_frames": 300})
+    frame = np.zeros((1000, 1000, 3), np.uint8)
+    for i in range(300):  # 10 s, 100 processing slots at stride 3
+        assert 0.0 <= core.step(frame, i / FPS) <= 1.0
+    # budget 0.6 x 10 s + 2 s = 8 s of step time at 0.5 s each -> about 16 slots, the rest skipped
+    assert 10 <= len(calls) <= 20 and core.skipped >= 80

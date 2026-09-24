@@ -263,6 +263,8 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
 
 risk:                         # SPEC §8 (Part B)
   stride: 3
+  budget_factor: 0.6          # our step() compute may use this x video time; beyond it frames are skipped
+  budget_slack_sec: 2.0       # (the harness decode, ~1-1.3x, and Part A, <= 1.2x, share the same 3x)
   max_pair_dist_m: 25.0
   min_closing_speed_mps: 1.0
   ttc_scale_sec: 1.5          # g(ttc) = exp(-ttc / ttc_scale_sec)
