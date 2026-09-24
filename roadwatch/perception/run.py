@@ -47,8 +47,12 @@ def run_perception(
     deadline: float | None = None,
     clock: Callable[[], float] = time.perf_counter,
     stats: dict[str, Any] | None = None,
+    progress: Callable[[float], None] | None = None,
 ) -> pd.DataFrame:
-    """TrackTable of one video (or of its first `t_end` seconds); fills `stats` with timings if given."""
+    """TrackTable of one video (or of its first `t_end` seconds); fills `stats` with timings if given.
+
+    `progress(fraction)` is called after every batch with the share of the video done (demo progress bar).
+    """
     cfg = load_thresholds()
     stride = stride or cfg["video"]["stride_part_a"]
     detector = detector or Detector.load()
@@ -98,6 +102,8 @@ def run_perception(
                 timing["track_sec"] += clock() - tick
                 counts["frames_detected"] += len(selected)
                 counts["detections"] += sum(len(d.conf) for d in detections)
+            if progress is not None and batch and horizon > 0:
+                progress(min(1.0, batch[-1][1] / horizon))
             if len(batch) < detector.batch_size:  # t_end reached or end of video
                 break
             pacer.update(batch[-1][1])

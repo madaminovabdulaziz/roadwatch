@@ -1,7 +1,8 @@
 """Configuration, repository paths, seeding and device selection.
 
 Contract:
-- `load_thresholds()` returns configs/thresholds.yaml parsed once per process (treat it as read-only).
+- `load_thresholds()` returns configs/thresholds.yaml parsed once per process (treat it as read-only),
+  with the optional ROADWATCH_OVERRIDES file deep-merged on top (demo backend only).
 - `class_cfg(label)` returns one class block; `enabled_classes()` lists labels with `enabled: true`.
 - `seed_everything()` fixes random/numpy/torch seeds and the deterministic CUDA flags (CLAUDE.md rule 6).
 - `get_device()` returns "cuda" when available, else "cpu"; the ROADWATCH_DEVICE env var overrides it.
@@ -29,9 +30,30 @@ SCENE_PATH = CONFIG_DIR / "scene.json"
 
 @functools.cache
 def load_thresholds(path: Path = THRESHOLDS_PATH) -> dict[str, Any]:
-    """Parse the tunables file once; the returned dict is shared, so never mutate it."""
+    """Parse the tunables file once; the returned dict is shared, so never mutate it.
+
+    If the ROADWATCH_OVERRIDES env var names a YAML file, it is deep-merged on top. Only the demo
+    backend sets it (a CPU profile, demo/config.yaml); the submission never does.
+    """
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    overrides = os.environ.get("ROADWATCH_OVERRIDES")
+    if overrides:
+        with open(overrides, encoding="utf-8") as f:
+            cfg = deep_merge(cfg, yaml.safe_load(f) or {})
+    return cfg
+
+
+def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Copy of `base` with `extra` merged in: nested dicts merge, anything else replaces."""
+    out = dict(base)
+    for key, value in extra.items():
+        out[key] = (
+            deep_merge(out[key], value)
+            if isinstance(value, dict) and isinstance(out.get(key), dict)
+            else value
+        )
+    return out
 
 
 def class_cfg(label: str) -> dict[str, Any]:
