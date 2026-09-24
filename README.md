@@ -4,9 +4,11 @@ Traffic event detection (Part A) and accident anticipation (Part B) for one fixe
 WIUT Hackathon 2026 computer-vision elimination task. `solution.py` is the organizers' interface; the logic
 lives in the `roadwatch/` package.
 
-> Status: packaging and perception are in place (RUNBOOK P0.1–P0.4). The submission runs end to end and
-> returns valid predictions; all 14 event classes are still disabled in `configs/thresholds.yaml` until they
-> pass the enable policy (`docs/SPEC.md` §7), so the event list is empty for now.
+> Status: the whole pipeline is written and tested on synthetic tracks: perception, kinematics, scene
+> geometry, signal-lamp timeline, 13 event rules, post-processing, Part B risk, rendering, website and demo.
+> Every class stays disabled in `configs/thresholds.yaml` until it passes the enable policy
+> (`docs/SPEC.md` §7) on the labelled samples, so the submitted event list is empty for now; Part B runs
+> only once `configs/scene.json` (with its homography) is calibrated.
 
 ## Run it (what the organizers run)
 
@@ -53,7 +55,21 @@ uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r r
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-On Windows use `.venv\Scripts\python.exe`. `requirements.txt` is a lock generated from `requirements.in`
+On Windows use `.venv\Scripts\python.exe`. The development loop, in order:
+
+```bash
+python scripts/cache_tracks.py samples/            # detect + track once per video (also the lamp timeline)
+python scripts/calibrate_scene.py --video samples/C3902.MP4   # click configs/scene.json (browser tool)
+python scripts/learn_lane_flow.py                  # lane directions from the tracks
+python scripts/labels_to_gt.py                     # labels/raw/*.csv -> labels/dev_gt.json
+python scripts/eval_dev.py                         # per-class F1 + every FP/FN with timestamps
+python scripts/tune.py --classes wrong_way         # small grid search on cached tracks
+python scripts/render_samples.py samples/ --preview-all   # look at what each rule would emit
+python scripts/check_determinism.py samples/       # two harness runs, identical output + x duration
+python scripts/make_predictions_samples.py         # the predictions_samples.json deliverable
+python scripts/eda.py samples/                     # EDA data for the website
+```
+ `requirements.txt` is a lock generated from `requirements.in`
 (see the command at the top of that file). Running on a Kaggle T4: `kaggle/README.md`.
 
 ## Where things are
