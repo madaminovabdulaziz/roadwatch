@@ -1,0 +1,4 @@
+# Shell scripts run on Linux (Docker, Kaggle) and in Git Bash: keep LF even on Windows checkouts,
+# where core.autocrlf would otherwise turn them into CRLF and bash fails on "$'\r'".
+*.sh text eol=lf
+Dockerfile text eol=lf
