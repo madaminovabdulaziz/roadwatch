@@ -237,7 +237,8 @@ def main() -> int:
 
     all_tt = pd.concat(pooled, ignore_index=True)
     width, height = summary[0]["width"], summary[0]["height"]
-    reference = cv2.imread(str(CONFIG_DIR / "reference.jpg"))
+    ref_path = CONFIG_DIR / "reference.jpg"
+    reference = cv2.imread(str(ref_path)) if ref_path.exists() else None
     bg = reference if reference is not None else np.zeros((height, width, 3), np.uint8)
     field = flow_field(all_tt, width, height)
     _dump(args.out / "flow_field.json", field)
