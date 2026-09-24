@@ -16,8 +16,9 @@ Guarantees:
   inside the same 3x budget (SPEC §12.10);
 - the output passes evaluate.py's format check (postprocess.to_events).
 
-Not wired yet (RUNBOOK P2.1): the lamp-based signal timeline and boundary refinement, which both read
-frames; until then `ctx.signal_timeline` is empty and rules that need a signal find no red phases.
+The signal-lamp timeline is built from the frames perception decodes anyway (detector size; lamp boxes
+are scaled). Not wired yet: boundary refinement at stride 1 (postprocess step 4), which needs labelled
+footage to show it helps (RUNBOOK P2.1).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from roadwatch.events import RULES
 from roadwatch.events.base import VideoContext, is_runnable
 from roadwatch.features import add_kinematics
 from roadwatch.postprocess import postprocess, to_events
-from roadwatch.scene.light import SignalTimeline
+from roadwatch.scene.light import SignalStateEstimator, SignalTimeline
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment, VideoMeta
 from roadwatch.video import probe
@@ -107,13 +108,16 @@ def detect_events(video_path: str) -> list[list]:
     from roadwatch.perception.run import run_perception  # torch loads only when something can be emitted
 
     runtime = thresholds["runtime"]
+    signals = SignalStateEstimator(scene) if scene.has("signals") else None
     tt = run_perception(
         video_path,
         thresholds["video"]["stride_part_a"],
         budget_sec=runtime["perception_budget_factor"] * meta.duration,
         deadline=start + runtime["part_a_deadline_factor"] * meta.duration,
+        on_frame=signals.observe if signals else None,
     )
-    events = events_from_tracks(tt, meta, scene, thresholds=thresholds)
+    timeline = signals.finish() if signals else {}
+    events = events_from_tracks(tt, meta, scene, signal_timeline=timeline, thresholds=thresholds)
     log.info(
         "%s: %d events from %d track rows in %.1f s (%.2fx duration)",
         meta.video_id,

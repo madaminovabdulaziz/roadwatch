@@ -11,6 +11,8 @@ Contract:
   .parquet written by scripts/cache_tracks.py.
 - `video_meta(name, videos_dir, cache_dir)` probes the video if it is here, else uses the cache sidecar
   (the samples may only live on Kaggle).
+- `cached_signals(stem, cache_dir, scene)` returns the cached signal timeline, or {} when it was measured
+  with other lamp boxes than the current scene's.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from typing import Any
 
 import pandas as pd
 
+from roadwatch.scene.light import SignalTimeline
+from roadwatch.scene.scene import Scene
 from roadwatch.types import VideoMeta
 from roadwatch.video import probe
 
@@ -152,6 +156,17 @@ def load_cached(stem: str, cache_dir: Path) -> tuple[pd.DataFrame, VideoMeta]:
     if sidecar.get("seconds"):
         raise ValueError(f"{parquet} covers only the first {sidecar['seconds']} s; recache the full video")
     return pd.read_parquet(parquet), meta
+
+
+def cached_signals(stem: str, cache_dir: Path, scene: Scene) -> SignalTimeline:
+    """The lamp timeline stored by scripts/cache_tracks.py, if it matches the scene's signal boxes."""
+    sidecar = cache_dir / f"{stem}.json"
+    if not sidecar.exists():
+        return {}
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    if data.get("signals") != (scene.layers.get("signals") or []):
+        return {}
+    return {sid: [tuple(seg) for seg in segs] for sid, segs in data.get("signal_timeline", {}).items()}
 
 
 def video_meta(name: str, videos_dir: Path, cache_dir: Path) -> VideoMeta | None:

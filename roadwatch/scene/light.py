@@ -3,7 +3,8 @@
 Contract:
 - States are "red", "yellow", "green" or "unknown".
 - Offline (Part A): `timeline(frames)` returns, per signal id, `[(t_start, t_end, state), ...]`
-  covering the frames given, majority-filtered over `signal.median_sec`.
+  covering the frames given, majority-filtered over `signal.median_sec`. The same in two steps:
+  `observe(frame, t)` per frame, then `finish()` (Part A feeds frames it decodes anyway).
 - Online (Part B): `update(frame, t_sec)` returns the current state per signal id using only frames
   seen so far (causal).
 - Frames may be native or downscaled: lamp boxes are scaled from the scene's `image_size`.
@@ -117,15 +118,24 @@ class SignalStateEstimator:
         self._lo: dict[str, np.ndarray] = {}
         self._hi: dict[str, np.ndarray] = {}
         self._recent: dict[str, deque[tuple[float, str]]] = {sid: deque() for sid in self.ids}
+        self._times: list[float] = []
+        self._raw: dict[str, list[np.ndarray]] = {sid: [] for sid in self.ids}
 
     def timeline(self, frames: Iterable[tuple[int, float, np.ndarray]]) -> SignalTimeline:
         """Offline timeline from frames in time order (any stride), majority-filtered, per signal id."""
-        times: list[float] = []
-        raw: dict[str, list[np.ndarray]] = {sid: [] for sid in self.ids}
         for _, t, frame in frames:
-            times.append(float(t))
-            for sid, scores in lamp_scores(frame, self.scene, self.cfg).items():
-                raw[sid].append(scores)
+            self.observe(frame, t)
+        return self.finish()
+
+    def observe(self, frame: np.ndarray, t_sec: float) -> None:
+        """Record one frame's lamp scores for `finish()` (lets Part A feed frames it decodes anyway)."""
+        self._times.append(float(t_sec))
+        for sid, scores in lamp_scores(frame, self.scene, self.cfg).items():
+            self._raw[sid].append(scores)
+
+    def finish(self) -> SignalTimeline:
+        """Timeline of every frame observed so far (offline: percentiles over the whole video)."""
+        times, raw = self._times, self._raw
         if not times:
             return {sid: [] for sid in self.ids}
 

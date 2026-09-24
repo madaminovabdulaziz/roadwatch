@@ -2,7 +2,9 @@
 
 Each parquet gets a JSON sidecar with the video metadata, the exact perception settings and weights
 hash that produced it (a cache made with other settings is recomputed, never silently reused), per-class
-track counts and timings. Rule development then reads tracks in seconds instead of re-running YOLO.
+track counts, timings, and the signal-lamp timeline measured on the same frames (with the lamp boxes
+used, so a timeline from an older scene.json is ignored by roadwatch.devdata.cached_signals). Rule
+development then reads tracks in seconds instead of re-running YOLO.
 
 Usage: python scripts/cache_tracks.py samples/ [--out cache/tracks] [--seconds N] [--force]
 """
@@ -24,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from roadwatch.config import CACHE_DIR, WEIGHTS_DIR, load_thresholds  # noqa: E402
 from roadwatch.perception.detector import Detector, detector_info  # noqa: E402
 from roadwatch.perception.run import run_perception  # noqa: E402
+from roadwatch.scene.light import SignalStateEstimator  # noqa: E402
+from roadwatch.scene.scene import Scene  # noqa: E402
 from roadwatch.video import probe  # noqa: E402
 
 VIDEO_EXTS = {".mp4", ".MP4"}  # same as run_submission.py
@@ -77,6 +81,7 @@ def main() -> int:
         ap.error(f"no .mp4 files in {args.videos}")
     args.out.mkdir(parents=True, exist_ok=True)
     settings = perception_settings()
+    scene = Scene.load()
     detector = Detector.load()
     print("detector:", detector_info(detector))
 
@@ -89,7 +94,14 @@ def main() -> int:
                 print(f"{path.name}: cache is current, skipped ({parquet})")
                 continue
         stats: dict[str, Any] = {}
-        table = run_perception(path, detector=detector, t_end=args.seconds or math.inf, stats=stats)
+        signals = SignalStateEstimator(scene) if scene.has("signals") else None
+        table = run_perception(
+            path,
+            detector=detector,
+            t_end=args.seconds or math.inf,
+            stats=stats,
+            on_frame=signals.observe if signals else None,
+        )
         table.to_parquet(parquet, index=False)
         meta = probe(path)
         summary = summarize(table)
@@ -109,6 +121,9 @@ def main() -> int:
                     "detector": detector_info(detector),
                     "stats": stats,
                     "summary": summary,
+                    # the lamp timeline, with the signal boxes it was measured with (a stale one is ignored)
+                    "signals": scene.layers.get("signals") or [],
+                    "signal_timeline": signals.finish() if signals else {},
                     "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 },
                 indent=1,

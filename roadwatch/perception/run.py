@@ -48,10 +48,12 @@ def run_perception(
     clock: Callable[[], float] = time.perf_counter,
     stats: dict[str, Any] | None = None,
     progress: Callable[[float], None] | None = None,
+    on_frame: Callable[[np.ndarray, float], None] | None = None,
 ) -> pd.DataFrame:
     """TrackTable of one video (or of its first `t_end` seconds); fills `stats` with timings if given.
 
     `progress(fraction)` is called after every batch with the share of the video done (demo progress bar).
+    `on_frame(frame, t)` sees every decoded frame (detector size), e.g. for the signal-lamp timeline.
     """
     cfg = load_thresholds()
     stride = stride or cfg["video"]["stride_part_a"]
@@ -92,6 +94,9 @@ def run_perception(
                 )
                 stopped_early = True
                 break
+            if on_frame is not None:
+                for _, t, img in batch:
+                    on_frame(img, t)
             selected = [frame for frame in batch if pacer.keep()]
             if selected:
                 tick = clock()

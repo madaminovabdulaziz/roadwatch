@@ -169,3 +169,16 @@ def test_label_eval_and_tune_scripts_end_to_end(tmp_path: Path) -> None:
         str(gt),
     )
     assert r.returncode == 1 and "bad.csv:2" in r.stdout
+
+
+def test_cached_signals_only_for_the_same_lamp_boxes(tmp_path: Path) -> None:
+    from roadwatch.devdata import cached_signals
+    from roadwatch.scene.scene import Scene
+
+    boxes = [{"id": "L1", "red": [0, 0, 5, 5], "yellow": [0, 6, 5, 5], "green": [0, 12, 5, 5]}]
+    sidecar = {"video": {}, "signals": boxes, "signal_timeline": {"L1": [[0.0, 5.0, "red"]]}}
+    (tmp_path / "a.json").write_text(json.dumps(sidecar), encoding="utf-8")
+    assert cached_signals("a", tmp_path, Scene({"signals": boxes})) == {"L1": [(0.0, 5.0, "red")]}
+    moved = [{**boxes[0], "red": [1, 0, 5, 5]}]
+    assert cached_signals("a", tmp_path, Scene({"signals": moved})) == {}
+    assert cached_signals("missing", tmp_path, Scene()) == {}

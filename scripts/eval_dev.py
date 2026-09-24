@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import evaluate  # noqa: E402
 from roadwatch import pipeline  # noqa: E402
 from roadwatch.config import CACHE_DIR, REPO_ROOT  # noqa: E402
-from roadwatch.devdata import load_cached  # noqa: E402
+from roadwatch.devdata import cached_signals, load_cached  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
 
 
@@ -78,7 +78,8 @@ def main() -> int:
             events = pipeline.detect_events(str(args.videos / video))
         else:
             tt, meta = load_cached(Path(video).stem, args.cache)
-            events = pipeline.events_from_tracks(tt, meta, scene)
+            timeline = cached_signals(Path(video).stem, args.cache, scene)
+            events = pipeline.events_from_tracks(tt, meta, scene, signal_timeline=timeline)
         pred["videos"][video] = {"events": events, "risk": []}
     args.out.write_text(json.dumps(pred, indent=1) + "\n", encoding="utf-8")
 
