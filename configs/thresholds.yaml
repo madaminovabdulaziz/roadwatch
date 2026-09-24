@@ -111,6 +111,10 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       single_window_sec: 1.5
       end_speed_mps: 0.3
       end_hold_sec: 2.0
+      confirm_speed_mps: 1.0        # "stays stopped" for the confirmation means slower than this
+      confirm_within_sec: 3.0       # the stop (or the disappearance) must begin this soon after contact
+      fall_aspect_upright: 1.5      # person box height/width before a fall...
+      fall_aspect_down: 1.0         # ...and after it
 
   near_miss:
     enabled: false
@@ -126,6 +130,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       no_accident_within_sec: 3.0
       onset_decel_mps2: 2.0
       end_ttc_sec: 3.0
+      evasive_window_sec: 2.0       # evasive action is searched this long before and after the TTC trigger
 
   red_light:
     enabled: false
