@@ -10,6 +10,7 @@ seed: 0
 video:
   stride_part_a: 3            # process every 3rd frame for Part A (~10 fps at 29.97 fps)
   stride_refine: 1            # boundary refinement reads full frame rate
+  max_consecutive_errors: 30  # undecodable packets/frames in a row before a reader gives up
 
 perception:                   # SPEC §3
   model: yolo11m              # COCO weights; drop to yolo11s if Part A alone > 0.6x duration
