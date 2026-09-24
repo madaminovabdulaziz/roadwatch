@@ -1,0 +1,21 @@
+# CPU profile of the demo backend, deep-merged over configs/thresholds.yaml via ROADWATCH_OVERRIDES
+# (WEBSITE_SPEC "Stack"). The submission never reads this file.
+video:
+  stride_part_a: 6            # 5 detections per second at 30 fps: a 2-minute clip is 600 frames
+perception:
+  imgsz: 640
+  half: false
+  batch_size: 4
+
+demo:                         # read by demo/ only
+  max_upload_mb: 100
+  max_duration_sec: 120
+  max_queue: 5
+  expiry_sec: 3600
+  work_height: 720            # uploads are re-encoded to H.264 at this height before processing
+  camera_match:
+    width: 960                # both images are compared at this width
+    orb_features: 2000
+    ratio: 0.75               # Lowe's ratio test
+    min_inliers: 40           # RANSAC homography inliers needed to call it the same camera
+    frames: 9                 # median of this many upload frames

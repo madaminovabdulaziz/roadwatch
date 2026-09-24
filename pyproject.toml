@@ -23,3 +23,5 @@ ignore = ["SIM300"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+# fastapi.testclient still imports starlette's httpx client; harmless for our API tests
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]

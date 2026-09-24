@@ -2,3 +2,8 @@
 -r requirements.txt
 pytest==8.4.2
 ruff==0.13.3
+# demo backend tests (demo/requirements.txt is the Space's own install)
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+httpx==0.28.1
