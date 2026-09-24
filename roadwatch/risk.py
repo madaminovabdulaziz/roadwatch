@@ -163,9 +163,6 @@ class RiskCore:
         self.score = 0.0
 
     def reset(self, meta: dict[str, Any]) -> None:
-        from roadwatch.perception.detector import Detector
-        from roadwatch.perception.tracker import OnlineTracker
-
         cfg = load_thresholds()
         self.cfg = dict(cfg["risk"])
         groups = cfg["perception"]["tracker_groups"]
@@ -189,6 +186,10 @@ class RiskCore:
             # no metric features are possible: the score is the constant bias, so skip perception
             self.score = risk_score(risk_features(pd.DataFrame(), self.scene, set(), self.cfg), self.cfg)
             return
+        # torch loads only when perception can matter (its import alone costs seconds of the budget)
+        from roadwatch.perception.detector import Detector
+        from roadwatch.perception.tracker import OnlineTracker
+
         self.detector = self._detector or Detector.load()
         self.tracker = OnlineTracker(self.fps / self.cfg["stride"])
         self.kin = OnlineKinematics(cfg["kinematics"]["ema_alpha"])
