@@ -268,7 +268,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       max_mean_speed_mps: 1.5
       min_vehicles_per_lane: 2
       min_sustain_sec: 20.0
-      long_sec: 60.0
+      long_sec_unknown_signal: 90.0  # without lamp states a jam must outlast any plausible red (SPEC §12.41; set from the measured cycle)
       green_persist_sec: 10.0
       clear_speed_mps: 3.0
       clear_hold_sec: 5.0
