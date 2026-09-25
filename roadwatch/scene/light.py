@@ -12,11 +12,16 @@ Contract:
   (vehicles crossing -> green, vehicles waiting while none cross -> red). It is low confidence:
   red_light must never rely on it.
 
-How a lamp is judged lit: its score is the mean brightness (HSV V) of its box plus the mean brightness
-of the pixels whose hue matches the lamp colour. Lamps differ in their off/on levels, so each score is
-normalised by that lamp's own range (offline: percentiles over the video; online: running min/max).
-The lamp with the highest normalised score is lit if it is past `lit_threshold`; a lamp that never
-varied by `min_contrast` is never judged lit.
+How a lamp is judged lit (SPEC §12.36), in this order:
+1. Colour excess (absolute, needs no history): the share of bright, saturated pixels of the lamp's
+   colour in its own box, minus the largest share of that colour in its sibling boxes. A lit lamp shows
+   its colour in its own box only; a red bus in front of the head shows red in every box (excess ~0),
+   so it is not a red light. Red wins over green over yellow (the CIS red+yellow phase is still red).
+2. Otherwise the relative brightness: mean V of the box plus mean V of lamp-coloured pixels, normalised
+   by that lamp's own range (offline: percentiles over the video; online: running min/max); the best
+   lamp past `lit_threshold` counts, but only if its colour excess is at least `fallback_min_excess`.
+The absolute test recognises yellow (lit ~5 % of the time, so percentiles never see it "on") and clips
+that stay in one state; the relative one covers washed-out colours.
 """
 
 from __future__ import annotations
@@ -39,44 +44,78 @@ LAMPS = ("red", "yellow", "green")
 UNKNOWN = "unknown"
 
 
-def lamp_scores(frame: np.ndarray, scene: Scene, cfg: dict[str, Any] | None = None) -> dict[str, np.ndarray]:
-    """Per signal id, the raw score of each lamp (red, yellow, green) in this frame (NaN if no box)."""
+def lamp_measures(
+    frame: np.ndarray, scene: Scene, cfg: dict[str, Any] | None = None
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Per signal id: (raw relative-brightness score, colour excess) of each lamp; NaN where no box."""
     cfg = cfg or load_thresholds()["signal"]
     width, height = scene.layers.get("image_size") or (frame.shape[1], frame.shape[0])
     sx, sy = frame.shape[1] / width, frame.shape[0] / height
     out = {}
     for sig in scene.layers.get("signals") or []:
-        scores = np.full(len(LAMPS), np.nan)
-        for k, lamp in enumerate(LAMPS):
-            if not sig.get(lamp):
-                continue
-            x, y, w, h = sig[lamp]
-            x0, y0 = int(np.floor(x * sx)), int(np.floor(y * sy))
-            x1, y1 = max(x0 + 1, int(np.ceil((x + w) * sx))), max(y0 + 1, int(np.ceil((y + h) * sy)))
-            crop = frame[max(y0, 0) : y1, max(x0, 0) : x1]
-            if crop.size:
-                scores[k] = _score(crop, lamp, cfg)
-        out[str(sig["id"])] = scores
+        crops: list[np.ndarray | None] = []
+        for lamp in LAMPS:
+            crop = None
+            if sig.get(lamp):
+                x, y, w, h = sig[lamp]
+                x0, y0 = int(np.floor(x * sx)), int(np.floor(y * sy))
+                x1, y1 = max(x0 + 1, int(np.ceil((x + w) * sx))), max(y0 + 1, int(np.ceil((y + h) * sy)))
+                crop = frame[max(y0, 0) : y1, max(x0, 0) : x1]
+                crop = crop if crop.size else None
+            crops.append(crop)
+        hsv = [cv2.cvtColor(c, cv2.COLOR_BGR2HSV) if c is not None else None for c in crops]
+        scores = np.array(
+            [_score(h, lamp, cfg) if h is not None else np.nan for h, lamp in zip(hsv, LAMPS, strict=True)]
+        )
+        # share[c][k]: share of bright pixels of lamp colour c in lamp box k
+        share = np.array([[_lit_share(h, c, cfg) if h is not None else np.nan for h in hsv] for c in LAMPS])
+        excess = np.full(len(LAMPS), np.nan)
+        for k in range(len(LAMPS)):
+            if np.isfinite(share[k, k]):
+                others = np.delete(share[k], k)
+                excess[k] = share[k, k] - (np.nanmax(others) if np.isfinite(others).any() else 0.0)
+        out[str(sig["id"])] = (scores, excess)
     return out
 
 
-def _score(crop: np.ndarray, lamp: str, cfg: dict[str, Any]) -> float:
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2].astype(np.float64) / 255
+def lamp_scores(frame: np.ndarray, scene: Scene, cfg: dict[str, Any] | None = None) -> dict[str, np.ndarray]:
+    """Per signal id, the raw relative-brightness score of each lamp (red, yellow, green); NaN if no box."""
+    return {sid: scores for sid, (scores, _) in lamp_measures(frame, scene, cfg).items()}
+
+
+def _colour_mask(hsv: np.ndarray, lamp: str, cfg: dict[str, Any]) -> np.ndarray:
+    hue, sat = hsv[..., 0], hsv[..., 1]
     match = np.zeros(hue.shape, dtype=bool)
     for lo, hi in cfg["hue_ranges"][lamp]:
         match |= (hue >= lo) & (hue < hi)
-    match &= sat >= cfg["min_saturation"]
-    return float(val.mean() + (val * match).mean())
+    return match & (sat >= cfg["min_saturation"])
 
 
-def _decide(norm: np.ndarray, contrast: np.ndarray, cfg: dict[str, Any]) -> str:
-    """State from one signal's normalised lamp scores."""
+def _score(hsv: np.ndarray, lamp: str, cfg: dict[str, Any]) -> float:
+    val = hsv[..., 2].astype(np.float64) / 255
+    return float(val.mean() + (val * _colour_mask(hsv, lamp, cfg)).mean())
+
+
+def _lit_share(hsv: np.ndarray, lamp: str, cfg: dict[str, Any]) -> float:
+    bright = hsv[..., 2] >= 255 * cfg["lit_min_value"]
+    return float((_colour_mask(hsv, lamp, cfg) & bright).mean())
+
+
+_PRIORITY = (LAMPS.index("red"), LAMPS.index("green"), LAMPS.index("yellow"))
+
+
+def _decide(norm: np.ndarray, contrast: np.ndarray, excess: np.ndarray, cfg: dict[str, Any]) -> str:
+    """State from one signal's colour excess (absolute) or, failing that, normalised lamp scores."""
+    for k in _PRIORITY:
+        if np.isfinite(excess[k]) and excess[k] >= cfg["lit_fraction"]:
+            return LAMPS[k]
     usable = np.isfinite(norm) & (contrast >= cfg["min_contrast"])
     if not usable.any():
         return UNKNOWN
     k = int(np.nanargmax(np.where(usable, norm, -np.inf)))
-    return LAMPS[k] if norm[k] >= cfg["lit_threshold"] else UNKNOWN
+    if norm[k] < cfg["lit_threshold"] or not (excess[k] >= cfg["fallback_min_excess"]):
+        return UNKNOWN
+    return LAMPS[k]
 
 
 def _mode(states: Iterable[str]) -> str:
@@ -120,6 +159,7 @@ class SignalStateEstimator:
         self._recent: dict[str, deque[tuple[float, str]]] = {sid: deque() for sid in self.ids}
         self._times: list[float] = []
         self._raw: dict[str, list[np.ndarray]] = {sid: [] for sid in self.ids}
+        self._excess: dict[str, list[np.ndarray]] = {sid: [] for sid in self.ids}
 
     def timeline(self, frames: Iterable[tuple[int, float, np.ndarray]]) -> SignalTimeline:
         """Offline timeline from frames in time order (any stride), majority-filtered, per signal id."""
@@ -130,8 +170,9 @@ class SignalStateEstimator:
     def observe(self, frame: np.ndarray, t_sec: float) -> None:
         """Record one frame's lamp scores for `finish()` (lets Part A feed frames it decodes anyway)."""
         self._times.append(float(t_sec))
-        for sid, scores in lamp_scores(frame, self.scene, self.cfg).items():
+        for sid, (scores, excess) in lamp_measures(frame, self.scene, self.cfg).items():
             self._raw[sid].append(scores)
+            self._excess[sid].append(excess)
 
     def finish(self) -> SignalTimeline:
         """Timeline of every frame observed so far (offline: percentiles over the whole video)."""
@@ -151,7 +192,8 @@ class SignalStateEstimator:
                 hi = np.nanpercentile(scores, p_hi, axis=0)
             contrast = hi - lo
             norm = (scores - lo) / np.where(contrast > 0, contrast, np.inf)
-            states = [_decide(row, contrast, self.cfg) for row in norm]
+            excess = np.asarray(self._excess[sid])
+            states = [_decide(row, contrast, ex, self.cfg) for row, ex in zip(norm, excess, strict=True)]
             lo_idx = np.searchsorted(t_arr, t_arr - half, side="left")
             hi_idx = np.searchsorted(t_arr, t_arr + half, side="right")
             smooth = [_mode(states[a:b]) for a, b in zip(lo_idx, hi_idx, strict=True)]
@@ -161,7 +203,7 @@ class SignalStateEstimator:
     def update(self, frame: np.ndarray, t_sec: float) -> dict[str, str]:
         """Causal state per signal id: running per-lamp range, trailing majority filter."""
         states = {}
-        for sid, scores in lamp_scores(frame, self.scene, self.cfg).items():
+        for sid, (scores, excess) in lamp_measures(frame, self.scene, self.cfg).items():
             if sid not in self._lo:
                 self._lo[sid], self._hi[sid] = scores.copy(), scores.copy()
             else:
@@ -170,7 +212,7 @@ class SignalStateEstimator:
             contrast = self._hi[sid] - self._lo[sid]
             norm = (scores - self._lo[sid]) / np.where(contrast > 0, contrast, np.inf)
             recent = self._recent[sid]
-            recent.append((t_sec, _decide(norm, contrast, self.cfg)))
+            recent.append((t_sec, _decide(norm, contrast, excess, self.cfg)))
             while recent and recent[0][0] < t_sec - self.cfg["median_sec"]:
                 recent.popleft()
             states[sid] = _mode(s for _, s in recent)

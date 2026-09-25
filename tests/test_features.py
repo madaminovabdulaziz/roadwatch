@@ -149,13 +149,19 @@ def test_online_is_causal_and_converges() -> None:
     pd.testing.assert_frame_equal(kin[cols].iloc[:30], kin2[cols].iloc[:30])
 
 
-def test_zone_columns_and_front_point() -> None:
+def test_zone_columns_and_vehicle_extent() -> None:
+    # A car crossing the image sideways (+x) in a top-down view: the footprint is the middle of its
+    # near long side, so the car's centre is half its width behind it (away from the camera, -y) and
+    # the bumpers are half its length ahead and behind along the heading (SPEC §12.35).
+    length, width = load_thresholds()["kinematics"]["vehicle_dims_m"]["car"]
     f = frames(2.0)
     t = f / FPS
     kin = add_kinematics(table(track(1, f, 10 + 5 * t, 0 * t + 20)), SCENE)
     assert kin["on_road"].all() and not kin["in_crosswalk"].any() and not kin["on_sidewalk"].any()
-    np.testing.assert_allclose(kin["front_x"], kin["fx"], atol=1e-4)
-    np.testing.assert_allclose(kin["front_y"], kin["fy"] - BOX_H / 2, atol=1e-4)
+    np.testing.assert_allclose(kin["front_x"], kin["fx"] + length / 2 * PX_PER_M, atol=1e-3)
+    np.testing.assert_allclose(kin["rear_x"], kin["fx"] - length / 2 * PX_PER_M, atol=1e-3)
+    np.testing.assert_allclose(kin["front_y"], kin["fy"] - width / 2 * PX_PER_M, atol=1e-3)
+    np.testing.assert_allclose(kin["rear_y"], kin["fy"] - width / 2 * PX_PER_M, atol=1e-3)
 
 
 def test_position_persistence_links_stationary_id_switch() -> None:

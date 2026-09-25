@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import evaluate  # noqa: E402
 from roadwatch import pipeline  # noqa: E402
 from roadwatch.config import CACHE_DIR, CONFIG_DIR, REPO_ROOT, load_thresholds  # noqa: E402
-from roadwatch.devdata import cached_signals, load_cached  # noqa: E402
+from roadwatch.devdata import cached_scene, cached_signals, load_cached  # noqa: E402
 from roadwatch.events.base import VideoContext  # noqa: E402
 from roadwatch.postprocess import postprocess, to_events  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
@@ -83,8 +83,8 @@ def main() -> int:
         videos.append(
             {
                 "name": name,
-                "kin": pipeline.prepare(tt, scene),
-                "scene": scene,
+                "kin": pipeline.prepare(tt, cached_scene(Path(name).stem, args.cache, scene)),
+                "scene": cached_scene(Path(name).stem, args.cache, scene),
                 "ctx": VideoContext(meta, stride, cached_signals(Path(name).stem, args.cache, scene)),
                 "ongoing_tol": stride / meta.fps,
             }

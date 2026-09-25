@@ -16,6 +16,7 @@ Guarantees:
   inside the same 3x budget (SPEC §12.10);
 - the output passes evaluate.py's format check (postprocess.to_events).
 
+The scene (clicked on the reference frame) is first aligned to the video (scene/registration.py).
 The signal-lamp timeline is built from the frames perception decodes anyway (detector size; lamp boxes
 are scaled). Not wired yet: boundary refinement at stride 1 (postprocess step 4), which needs labelled
 footage to show it helps (RUNBOOK P2.1).
@@ -36,6 +37,7 @@ from roadwatch.events.base import VideoContext, is_runnable
 from roadwatch.features import add_kinematics
 from roadwatch.postprocess import postprocess, to_events
 from roadwatch.scene.light import SignalStateEstimator, SignalTimeline
+from roadwatch.scene.registration import scene_for_video
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment, VideoMeta
 from roadwatch.video import probe
@@ -104,6 +106,8 @@ def detect_events(video_path: str) -> list[list]:
     if not runnable:
         log.info("%s: no enabled class has the scene layers it needs; skipping perception", meta.video_id)
         return []
+
+    scene, _ = scene_for_video(video_path, scene)  # the tripod moves between recordings (SPEC §12.34)
 
     from roadwatch.perception.run import run_perception  # torch loads only when something can be emitted
 

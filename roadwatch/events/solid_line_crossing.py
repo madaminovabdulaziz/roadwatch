@@ -1,15 +1,17 @@
 """solid_line_crossing: A lane change or manoeuvre across a solid marking.
 
-Trigger: Both bottom box corners start on one side of a solid polyline and end on the other, the
-lateral move is >= min_lateral_m, and it happens outside the intersection.
-Start: the first bottom corner crosses.
-End: the second bottom corner crosses.
+Trigger: the vehicle's ground rectangle goes from fully on one side of a solid polyline segment to fully
+on the other, moving at least min_lateral_m across it, outside the intersection. A corner that touches
+the line and returns does not count.
+Start: the first corner (wheel) crosses the line.
+End: the last corner has crossed (the vehicle is fully in the new lane).
 
 Details:
-- Crossings are found per polyline segment for each bottom corner, with interpolated times. A corner
-  that crosses back before the other corner follows cancels its crossing (a wheel touching the line).
-- The lateral move is the footprint's displacement across the crossed segment on the road plane, from
-  the sample before the first crossing to the sample after the second.
+- Corners come from the ground-plane vehicle model (features.vehicle_corners, SPEC §12.35), not from
+  the image box: in this oblique view the box is much wider than the car's ground footprint.
+- A corner counts only while its projection falls within the segment's extent (plus half a car
+  length), so a vehicle passing the end of a solid line is not crossing it.
+- Boundaries at sample transitions are timed at the midpoint of the two samples.
 Score = 1.0 (all tests are geometric).
 
 Thresholds: configs/thresholds.yaml -> classes.solid_line_crossing.params (SPEC §5).
@@ -23,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, crossings, in_group, max_gap
+from roadwatch.events.common import by_track, in_group, max_gap, midpoint_before
+from roadwatch.features import vehicle_corners
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -31,51 +34,66 @@ LABEL = "solid_line_crossing"
 REQUIRED_LAYERS: tuple[str, ...] = ("homography", "solid_lines")
 
 
-def _side(seg: np.ndarray, pt: np.ndarray) -> float:
-    (ax, ay), (bx, by) = seg
-    return float(np.sign((bx - ax) * (pt[1] - ay) - (by - ay) * (pt[0] - ax)))
+def _sides(seg_world: np.ndarray, corners_world: np.ndarray, margin: float) -> np.ndarray:
+    """(N, 4) side of each corner (+1 / -1) relative to the segment's line; 0 where off the segment."""
+    a, b = seg_world
+    d = b - a
+    length = float(np.hypot(*d))
+    u = d / length
+    rel = corners_world - a
+    along = rel @ u
+    cross = rel[..., 0] * u[1] - rel[..., 1] * u[0]
+    on_segment = (along >= -margin) & (along <= length + margin)
+    return np.where(on_segment, np.sign(cross), 0.0)
 
 
 def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any]) -> list[Segment]:
     if tt.empty:
         return []
     p = cfg["params"]
-    v = tt[in_group(tt, "vehicles", "two_wheelers")]
+    v = tt[in_group(tt, "vehicles", "two_wheelers") & tt["kin_valid"].to_numpy()]
     gap = max_gap(ctx)
     segments = []
     for line in scene.layers.get("solid_lines") or []:
-        poly = np.asarray(line["polyline"], dtype=np.float64)
+        poly = scene.to_world(np.asarray(line["polyline"], dtype=np.float64))
         for tid, rows in by_track(v):
             t = rows["t"].to_numpy()
-            corners = [
-                rows[["x1", "y2"]].to_numpy(dtype=np.float64),
-                rows[["x2", "y2"]].to_numpy(dtype=np.float64),
-            ]
-            foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
+            corners = scene.to_world(vehicle_corners(rows, scene).reshape(-1, 2)).reshape(len(rows), 4, 2)
+            centre = rows[["cX", "cY"]].to_numpy(dtype=np.float64)
             inter = rows["in_intersection"].to_numpy()
+            margin = float(np.nanmax(rows["veh_len"].to_numpy())) / 2
             for s in range(len(poly) - 1):
                 seg = poly[s : s + 2]
-                events = sorted(
-                    (tc, c, k, _side(seg, corners[c][k - 1]))
-                    for c in (0, 1)
-                    for k, tc in crossings(t, corners[c], seg, gap)
-                )
-                pending: dict[int, tuple[float, int, float]] = {}  # corner -> (time, step, side it left)
-                for tc, c, k, side in events:
-                    other = 1 - c
-                    if c in pending and pending[c][2] != side:
-                        del pending[c]  # crossed back: it was only touching the line
-                        continue
-                    if other in pending and pending[other][2] == side:
-                        t0, k0, _ = pending.pop(other)
-                        before, after = foot[k0 - 1], foot[min(k, len(foot) - 1)]
-                        a, b = scene.to_world(seg)
-                        normal = np.array([-(b - a)[1], (b - a)[0]]) / np.linalg.norm(b - a)
-                        moved = abs(
-                            float((scene.to_world(after[None])[0] - scene.to_world(before[None])[0]) @ normal)
-                        )
-                        if moved >= p["min_lateral_m"] and not (inter[k0] or inter[k]):
-                            segments.append(Segment(t0, tc, LABEL, 1.0, (tid,), {"line": line["id"]}))
-                    else:
-                        pending[c] = (tc, k, side)
+                sides = _sides(seg, corners, margin)
+                full = np.where((sides == 1).all(axis=1), 1, np.where((sides == -1).all(axis=1), -1, 0))
+                event = _crossing(t, sides, full, centre, seg, inter, p, gap)
+                if event is not None:
+                    segments.append(Segment(*event, LABEL, 1.0, (tid,), {"line": line["id"]}))
     return segments
+
+
+def _crossing(
+    t: np.ndarray,
+    sides: np.ndarray,
+    full: np.ndarray,
+    centre: np.ndarray,
+    seg: np.ndarray,
+    inter: np.ndarray,
+    p: dict[str, Any],
+    gap: float,
+) -> tuple[float, float] | None:
+    """(start, end) of the first full side change of one track across one segment, else None."""
+    settled = np.flatnonzero(full != 0)
+    for i, j in zip(settled, settled[1:], strict=False):
+        if full[i] == full[j] or (t[i + 1 : j + 1] - t[i:j] > gap).any():
+            continue  # same side (a touch) or a gap in the track
+        if inter[i : j + 1].any():
+            continue  # manoeuvres inside the intersection cross no lane marking
+        d = seg[1] - seg[0]
+        normal = np.array([-d[1], d[0]]) / float(np.hypot(*d))
+        if abs(float((centre[j] - centre[i]) @ normal)) < p["min_lateral_m"]:
+            continue
+        # first sample after i where a corner left the starting side; the end is the settled sample j
+        started = i + 1 + int(np.flatnonzero((sides[i + 1 : j + 1] != full[i]).any(axis=1))[0])
+        return midpoint_before(t, started, gap), midpoint_before(t, j, gap)
+    return None

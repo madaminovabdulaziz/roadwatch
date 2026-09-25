@@ -13,6 +13,8 @@ Contract:
   until it is back under. Over the 3x budget the whole video would score empty, Part A included; on a
   machine fast enough this never triggers, so normal runs stay deterministic.
 
+The scene is aligned to the video on the first processed frames (OnlineRegistration; until then, and if
+it never fits confidently, the scene is used as clicked).
 Per processed frame: resize to the detector size -> detect -> own OnlineTracker -> causal kinematics
 (EMA, the same update as features' online mode) -> features (`risk_features`) -> score (`risk_score`):
     z = b + w1 g(ttc_min) + w2 clip(closing/10) + w3 clip(decel_max/8) + w4 wrong_way + w5 red_light
@@ -37,6 +39,7 @@ from roadwatch.config import load_thresholds
 from roadwatch.events.common import lane_world_dirs
 from roadwatch.features import pair_features
 from roadwatch.scene.light import SignalStateEstimator
+from roadwatch.scene.registration import OnlineRegistration
 from roadwatch.scene.scene import Scene
 from roadwatch.types import FrameTracks
 
@@ -207,6 +210,8 @@ class RiskCore:
             if lane.get("signal")
         }
         self.det_size = self.detector.frame_size_for(*self.native)
+        # the scene is aligned to this video from the frames step() receives (causal, SPEC §12.34)
+        self.registration = OnlineRegistration(self.scene, self.native)
 
     def step(self, frame: np.ndarray, t_sec: float) -> float:
         idx = int(round(t_sec * self.fps))
@@ -222,7 +227,23 @@ class RiskCore:
         finally:
             self.spent += time.perf_counter() - started
 
+    def _use_scene(self, scene: Scene) -> None:
+        """Switch to the scene aligned to this video.
+
+        Positions in metres change frame (a 100 px shift is 1-2 m), so the online kinematics restart
+        instead of reading the jump as motion, and the lamp reader restarts on the moved boxes (its
+        running per-lamp range was measured on the old ones).
+        """
+        self.scene = scene
+        self.kin = OnlineKinematics(self.kin.alpha)
+        if self.signals is not None:
+            self.signals = SignalStateEstimator(scene)
+
     def _process(self, frame: np.ndarray, t_sec: float, idx: int) -> float:
+        if not self.registration.done:
+            aligned = self.registration.offer(frame, t_sec)
+            if aligned is not None:
+                self._use_scene(aligned)
         small = cv2.resize(frame, self.det_size, interpolation=cv2.INTER_AREA)
         dets = self.detector.predict([(idx, t_sec, small)], native_size=self.native)[0]
         tracks: FrameTracks = self.tracker.update(dets)

@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from roadwatch import pipeline  # noqa: E402
 from roadwatch.config import CACHE_DIR, REPO_ROOT, enabled_classes, load_thresholds  # noqa: E402
-from roadwatch.devdata import cached_signals, load_cached  # noqa: E402
+from roadwatch.devdata import cached_scene, cached_signals, load_cached  # noqa: E402
 from roadwatch.events import RULES  # noqa: E402
 from roadwatch.events.base import VideoContext  # noqa: E402
 from roadwatch.postprocess import postprocess, to_events  # noqa: E402
@@ -89,6 +89,7 @@ def main() -> int:
             print(f"{video.name}: skipped ({exc})")
             continue
         timeline = cached_signals(stem, args.cache, scene)
+        video_scene = cached_scene(stem, args.cache, scene)
         risk: list[list[float]] = []
         if pred and video.name in pred.get("videos", {}):
             events = pred["videos"][video.name]["events"]
@@ -97,9 +98,9 @@ def main() -> int:
             if log and log.get("duration"):
                 ratios.append(log["total_sec"] / log["duration"])
         elif args.preview_all:
-            events = preview_events(tt, meta, scene, timeline)
+            events = preview_events(tt, meta, video_scene, timeline)
         else:
-            events = pipeline.events_from_tracks(tt, meta, scene, signal_timeline=timeline)
+            events = pipeline.events_from_tracks(tt, meta, video_scene, signal_timeline=timeline)
 
         folder = args.out / stem
         folder.mkdir(parents=True, exist_ok=True)
@@ -108,7 +109,7 @@ def main() -> int:
             tt,
             events,
             risk,
-            scene,
+            video_scene,
             folder / "annotated.mp4",
             blur_faces=not args.no_blur,
             signal_timeline=timeline,
@@ -140,7 +141,7 @@ def main() -> int:
                     tt,
                     events,
                     risk,
-                    scene,
+                    video_scene,
                     clip,
                     t0=t0,
                     t1=t1,

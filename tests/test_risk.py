@@ -209,3 +209,25 @@ def test_pacing_skips_work_when_behind_schedule(monkeypatch: pytest.MonkeyPatch)
         assert 0.0 <= core.step(frame, i / FPS) <= 1.0
     # budget 0.6 x 10 s + 2 s = 8 s of step time at 0.5 s each -> about 16 slots, the rest skipped
     assert 10 <= len(calls) <= 20 and core.skipped >= 80
+
+
+def test_aligning_the_scene_mid_video_does_not_look_like_motion() -> None:
+    # Part B aligns the scene to the video from the frames it receives (SPEC §12.34). The moment it does,
+    # every footprint's position in metres jumps (here 1.5 m); stationary cars must not read as braking.
+    shift = np.array([[1.0, 0.0, 15.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # reference -> video: 15 px
+
+    class AlignAtOneSecond:
+        done = False
+
+        def offer(self, frame, t_sec):
+            if t_sec < 1.0:
+                return None
+            self.done = True
+            return NO_LANES.transformed(shift, (1000, 1000))
+
+    core = RiskCore(detector=FakeDetector(lambda t: [(30, 45, 2)]), scene=NO_LANES)
+    core.reset({"video_id": "v.mp4", "fps": FPS, "width": 1000, "height": 1000, "n_frames": 90})
+    core.registration = AlignAtOneSecond()
+    frame = np.zeros((1000, 1000, 3), np.uint8)
+    scores = [core.step(frame, i / FPS) for i in range(90)]
+    assert max(scores) < 0.05, max(scores)

@@ -15,6 +15,11 @@ Rules receive the TrackTable after `features.add_kinematics` (one row per track 
 - `past_line_m(scene, line, pts, lane_dir)`: signed metres beyond a line in the lane direction.
 - `dist_to_polygon_m(scene, polygon, pts)`: metres to a polygon's boundary (0 inside).
 - `stable_from(t, heading, start, tol, hold)`: first index whose heading then holds within `tol`.
+- `midpoint_before(t, i, gap)` / `midpoint_after(t, mask, i, gap)`: event boundaries at a sample
+  transition are timed at the midpoint of the two samples (unbiased at ~10 Hz); across a gap longer than
+  `gap`, or at a track's end, the sample itself is used.
+- `along_vehicle(rows, n)`: `n` image points from each row's front bumper to its rear bumper, for
+  "does the vehicle overlap this polygon" tests.
 """
 
 from __future__ import annotations
@@ -159,3 +164,30 @@ def stable_from(t: np.ndarray, heading: np.ndarray, start: int, tol: float, hold
         if np.all(np.abs(diff[np.isfinite(diff)]) <= tol):
             return i
     return None
+
+
+def midpoint_before(t: np.ndarray, i: int, gap: float) -> float:
+    """Time a state starting at sample `i` began: midway from the previous sample if it is close."""
+    if i > 0 and t[i] - t[i - 1] <= gap:
+        return float((t[i - 1] + t[i]) / 2)
+    return float(t[i])
+
+
+def midpoint_after(t: np.ndarray, mask: np.ndarray, i: int, gap: float) -> float:
+    """Time the state `mask` (True from sample `i`) ended: midway to the first False sample after it;
+    the last sample if it never ends in this track (the object left the frame) or across a gap."""
+    off = np.flatnonzero(~mask[i:])
+    if not len(off):
+        return float(t[-1])
+    j = i + int(off[0])
+    if j > 0 and t[j] - t[j - 1] <= gap:
+        return float((t[j - 1] + t[j]) / 2)
+    return float(t[j - 1] if j > 0 else t[j])
+
+
+def along_vehicle(rows: pd.DataFrame, n: int = 5) -> np.ndarray:
+    """(N, n, 2) image points evenly spaced from each row's front bumper to its rear bumper."""
+    front = rows[["front_x", "front_y"]].to_numpy(dtype=np.float64)
+    rear = rows[["rear_x", "rear_y"]].to_numpy(dtype=np.float64)
+    w = np.linspace(0.0, 1.0, n)[None, :, None]
+    return front[:, None, :] * (1 - w) + rear[:, None, :] * w

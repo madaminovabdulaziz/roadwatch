@@ -27,6 +27,7 @@ from roadwatch.config import CACHE_DIR, WEIGHTS_DIR, load_thresholds  # noqa: E4
 from roadwatch.perception.detector import Detector, detector_info  # noqa: E402
 from roadwatch.perception.run import run_perception  # noqa: E402
 from roadwatch.scene.light import SignalStateEstimator  # noqa: E402
+from roadwatch.scene.registration import scene_for_video  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
 from roadwatch.video import probe  # noqa: E402
 
@@ -94,7 +95,8 @@ def main() -> int:
                 print(f"{path.name}: cache is current, skipped ({parquet})")
                 continue
         stats: dict[str, Any] = {}
-        signals = SignalStateEstimator(scene) if scene.has("signals") else None
+        video_scene, registration = scene_for_video(path, scene)
+        signals = SignalStateEstimator(video_scene) if video_scene.has("signals") else None
         table = run_perception(
             path,
             detector=detector,
@@ -121,7 +123,9 @@ def main() -> int:
                     "detector": detector_info(detector),
                     "stats": stats,
                     "summary": summary,
-                    # the lamp timeline, with the signal boxes it was measured with (a stale one is ignored)
+                    # scene -> video alignment (SPEC §12.34); None if it failed or the scene has no reference
+                    "registration": registration.summary() if registration else None,
+                    # the lamp timeline, with the clicked signal boxes it was measured from (stale -> ignored)
                     "signals": scene.layers.get("signals") or [],
                     "signal_timeline": signals.finish() if signals else {},
                     "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),

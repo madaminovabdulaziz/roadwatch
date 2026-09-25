@@ -7,6 +7,9 @@ Contract:
 - Geometry helpers work on pixel coordinates of the native resolution (3840x2160 for the samples):
   `point_in(layer, pts)`, `region_of(layer, pts)`, `lane_of(pts)`, `crosses(line, p0, p1)`, and the
   homography pair `to_world(pts)` / `to_image(pts)` (metres on the road plane).
+- `transformed(H, image_size)` maps every layer through a pixel homography, e.g. from the reference
+  frame into one video's framing (roadwatch/scene/registration.py). The road-plane mapping is composed
+  exactly (`homography.matrix`), not refitted from moved points.
 
 Polygon layers come in three shapes (SPEC §4): one polygon (`carriageway`, `intersection`), a list of
 polygons (`sidewalks`, `parking_zones`, `no_u_turn_zones`), or a list of objects with `id` and `polygon`
@@ -122,11 +125,56 @@ class Scene:
         """Whether each step p0[i] -> p1[i] crosses the 2-point `line`."""
         return segments_cross(line, p0, p1)
 
+    def transformed(self, H: np.ndarray, image_size: tuple[int, int]) -> Scene:
+        """This scene with every pixel coordinate mapped through the 3x3 homography `H`.
+
+        Polygons, lines and polylines map point by point; lamp boxes become the bounding box of their
+        mapped corners; lane directions are re-measured at the lane's centroid; the road-plane
+        homography becomes `world_from_old @ inv(H)` exactly. Non-geometric attributes are kept.
+        """
+        H = np.asarray(H, dtype=np.float64)
+        layers = json.loads(json.dumps(self.layers))  # deep copy of plain JSON data
+        layers["image_size"] = [int(image_size[0]), int(image_size[1])]
+        for layer in ("carriageway", "intersection"):
+            if layers.get(layer):
+                layers[layer] = _map_list(H, layers[layer])
+        for layer in ("sidewalks", "parking_zones", "no_u_turn_zones"):
+            if layers.get(layer):
+                layers[layer] = [_map_list(H, poly) for poly in layers[layer]]
+        for layer, key in (("exits", "polygon"), ("crosswalks", "polygon"), ("solid_lines", "polyline")):
+            for item in layers.get(layer) or []:
+                item[key] = _map_list(H, item[key])
+        for lane in layers.get("lanes") or []:
+            poly = np.asarray(lane["polygon"], dtype=np.float64)
+            if lane.get("direction"):
+                centre = poly.mean(axis=0)
+                a, b = _map(H, np.stack([centre, centre + 100.0 * np.asarray(lane["direction"], float)]))
+                d = (b - a) / max(float(np.hypot(*(b - a))), 1e-12)
+                lane["direction"] = [round(float(d[0]), 6), round(float(d[1]), 6)]
+            lane["polygon"] = _map_list(H, poly)
+        for line in layers.get("stop_lines") or []:
+            line["line"] = _map_list(H, line["line"])
+        for sig in layers.get("signals") or []:
+            for lamp in ("red", "yellow", "green"):
+                if sig.get(lamp):
+                    x, y, w, h = sig[lamp]
+                    corners = _map(H, np.array([[x, y], [x + w, y], [x, y + h], [x + w, y + h]], float))
+                    lo, hi = corners.min(axis=0), corners.max(axis=0)
+                    sig[lamp] = [round(float(v), 2) for v in (lo[0], lo[1], hi[0] - lo[0], hi[1] - lo[1])]
+        if layers.get("homography"):
+            world_from_new = self._homography[0] @ np.linalg.inv(H)
+            layers["homography"]["image_pts"] = _map_list(H, layers["homography"]["image_pts"])
+            layers["homography"]["matrix"] = (world_from_new / world_from_new[2, 2]).tolist()
+        return Scene(layers)
+
     @functools.cached_property
     def _homography(self) -> tuple[np.ndarray, np.ndarray]:
         h = self.layers.get("homography")
         if not h:
             raise ValueError("scene has no homography; metric rules must be disabled (SPEC §12.7)")
+        if h.get("matrix") is not None:  # composed by `transformed`, exact
+            H = np.asarray(h["matrix"], dtype=np.float64)
+            return H, np.linalg.inv(H)
         img = np.asarray(h["image_pts"], dtype=np.float64)
         world = np.asarray(h["world_pts"], dtype=np.float64)
         H, _ = cv2.findHomography(img, world, 0)
@@ -148,3 +196,11 @@ def _apply_homography(H: np.ndarray, pts: np.ndarray) -> np.ndarray:
     if len(pts) == 0:
         return pts.copy()
     return cv2.perspectiveTransform(pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+
+
+def _map(H: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    return _apply_homography(H, pts)
+
+
+def _map_list(H: np.ndarray, pts: Any) -> list[list[float]]:
+    return [[round(float(x), 2), round(float(y), 2)] for x, y in _map(H, np.asarray(pts, dtype=np.float64))]

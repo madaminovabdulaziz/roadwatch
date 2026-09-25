@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from roadwatch.config import load_thresholds
 from roadwatch.events import (
     failure_to_yield,
     illegal_turn,
@@ -21,7 +22,7 @@ from roadwatch.events import (
     stop_line,
 )
 from roadwatch.scene.scene import Scene
-from tests.test_events_batch1 import FPS, braking_car, cfg, frames, rect, track
+from tests.test_events_batch1 import FPS, PX, braking_car, cfg, frames, rect, track
 
 SCENE = Scene(
     {
@@ -87,13 +88,42 @@ def straight(tid: int, x0: float, y: float, v: float, t1: float, cls: str = "car
 
 
 # ---------------------------------------------------------------------------------------- red_light
+# The ground-plane vehicle model (SPEC §12.35) puts a car's bumpers 2.3 m (half of 4.6 m) ahead of and
+# behind its centre. In these top-down scenes the footprint is the box bottom-centre, the centre is
+# 0.9 m (half the width) above it, and for eastbound cars front x = footprint x + 2.3, rear x = - 2.3.
+
+
 def test_red_light_from_crossing_to_leaving_the_intersection() -> None:
     tt = kin(straight(1, 50, 45, 10, 12))
     segs = red_light.detect(tt, SCENE, ctx(12, RED), cfg("red_light"))
     assert len(segs) == 1
-    # the front point (1.5 m ahead of the footprint) crosses x = 95 m at t = 4.35; the footprint
-    # leaves the intersection (x = 140 m) at t = 9.0
-    assert near(segs[0], 4.35, 9.0)
+    # the front bumper (52.3 + 10 t) crosses x = 95 m at t = 4.27; the rear bumper (47.7 + 10 t)
+    # clears the intersection (x = 140 m) at t = 9.23
+    assert near(segs[0], 4.27, 9.23, tol=0.06)
+
+
+def test_jumping_the_red_from_the_head_of_the_queue_is_red_light() -> None:
+    # The most common violation here: the first car waits with its front bumper 0.2 m behind the line,
+    # pulls away while the light is still red and drives through. It crosses the line slowly (< 1 m/s),
+    # which must not be mistaken for "stopped past the line" (stop_line's case).
+    half_len = load_thresholds()["kinematics"]["vehicle_dims_m"]["car"][0] / 2
+    x_stop = 95.0 - half_len - 0.2  # footprint position while waiting (front bumper 0.2 m before x = 95)
+    tt = kin(braking_car(1, x_stop, 45, t_brake=1, t_go=10, t_end=20))
+    segs = red_light.detect(tt, SCENE, ctx(20, RED), cfg("red_light"))
+    t_cross = 10 + 0.2**0.5  # front: 95 - 0.2 + (t - 10)^2 = 95
+    t_clear = 10 + (140 - x_stop + half_len) ** 0.5  # rear: x_stop - half_len + (t - 10)^2 = 140
+    assert len(segs) == 1 and near(segs[0], t_cross, t_clear, tol=0.1), (segs, t_cross, t_clear)
+
+
+def test_crossing_then_stopping_before_the_intersection_is_not_red_light() -> None:
+    # front 2 m past the line (x = 97), stops on the crosswalk, goes on at green: stop_line, not red_light
+    tt = kin(braking_car(1, 94.7, 45, t_brake=2, t_go=25, t_end=30))
+    assert red_light.detect(tt, SCENE, ctx(30, RED), cfg("red_light")) == []
+
+
+def test_a_short_red_glitch_is_not_a_red_phase() -> None:
+    glitch = {"L1": [(0.0, 3.8, "green"), (3.8, 5.3, "red"), (5.3, 30.0, "green")]}  # a 1.5 s "red"
+    assert red_light.detect(kin(straight(1, 50, 45, 10, 12)), SCENE, ctx(12, glitch), cfg("red_light")) == []
 
 
 @pytest.mark.parametrize(
@@ -133,18 +163,24 @@ def pedestrian(tid: int, x: float, y0: float, vy: float, t1: float):
 
 
 def test_vehicle_through_occupied_crosswalk() -> None:
-    tt = kin(straight(1, 60, 45, 4, 15), pedestrian(2, 98, 56, 0, 15))
+    # car x = 60 + 4 t: its front bumper reaches the crosswalk (x = 96) at t = 8.43, its rear bumper
+    # clears it (x = 100) at t = 10.58; the pedestrian stands in its path (2.9 m from its axis)
+    tt = kin(straight(1, 60, 45, 4, 15), pedestrian(2, 98, 47, 0, 15))
     segs = failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield"))
-    assert len(segs) == 1 and near(segs[0], 9.0, 10.0) and segs[0].score == 1.0
+    assert len(segs) == 1 and near(segs[0], 8.43, 10.58, tol=0.06) and segs[0].score == 1.0
+
+
+def test_a_pedestrian_far_along_the_same_crosswalk_is_not_in_the_path() -> None:
+    tt = kin(straight(1, 60, 45, 4, 15), pedestrian(2, 98, 22, 0, 15))  # 22 m from the car's axis
+    assert failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield")) == []
 
 
 def test_pedestrian_stepping_onto_the_crosswalk_counts_with_lower_score() -> None:
-    tt = kin(straight(1, 60, 45, 4, 15), pedestrian(2, 98, 61.3 - 0.0, -0.05, 15))  # 1 m out, walking in
+    # car in lane e2 (y = 57.5, axis 56.6); pedestrian beyond the kerb at y = 60, 4.4 m from the axis
+    tt = kin(straight(1, 60, 57.5, 4, 15), pedestrian(2, 98, 61.0, -0.05, 15))  # 1 m out, standing
     segs = failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield"))
     assert len(segs) == 0  # 0.05 m/s is standing, not stepping onto it
-    tt = kin(
-        straight(1, 60, 45, 4, 15), pedestrian(2, 98, 65.2, -0.5, 15)
-    )  # 1 m from the edge at 8.4 s, still outside at 10 s
+    tt = kin(straight(1, 60, 57.5, 4, 15), pedestrian(2, 98, 65.8, -0.5, 15))  # 1 m out at 9.6 s, walking in
     segs = failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield"))
     assert len(segs) == 1 and segs[0].score == 0.7
 
@@ -175,13 +211,38 @@ LINE_SCENE = Scene(
 )
 
 
-def lane_change(x_from: float, x_to: float, t_start: float, lateral_speed: float):
+def lane_change(t_start: float, secs: float = 2.0):
+    """A 4.6 x 1.8 m car driving up the image at 10 m/s, moving from x = 47 m to 53 m over `secs`.
+
+    The rows are drawn from the true rectangle (top-down: box = its bounding box, footprint = box
+    bottom-centre); also returns when its first and its last corner cross x = 50 m (the oracle).
+    """
     f = frames(0, 8)
     t = f / FPS
-    x = np.clip(
-        x_from + np.sign(x_to - x_from) * lateral_speed * (t - t_start), min(x_from, x_to), max(x_from, x_to)
-    )
-    return track(1, f, x, 90 - 10 * t, w_px=20, h_px=15)  # driving "up" the image, 2 m wide box
+
+    def path(tt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        s_ = np.clip((tt - t_start) / secs, 0.0, 1.0)
+        return 47 + 6 * (3 * s_**2 - 2 * s_**3), 90 - 10 * tt  # smoothstep lateral move
+
+    def corners(tt: np.ndarray) -> np.ndarray:
+        x, y = path(tt)
+        dt = 1e-3
+        x2, y2 = path(tt + dt)
+        h = np.stack([x2 - x, y2 - y], axis=-1)
+        h /= np.linalg.norm(h, axis=-1, keepdims=True)
+        n = np.stack([-h[..., 1], h[..., 0]], axis=-1)
+        c = np.stack([x, y], axis=-1)
+        return np.stack([c + a * 2.3 * h + b * 0.9 * n for a in (-1, 1) for b in (-1, 1)], axis=-2)
+
+    cs = corners(t)
+    x1, x2 = cs[..., 0].min(axis=1), cs[..., 0].max(axis=1)
+    y1, y2 = cs[..., 1].min(axis=1), cs[..., 1].max(axis=1)
+    rows = track(1, f, (x1 + x2) / 2, y2)
+    rows["x1"], rows["x2"], rows["y1"], rows["y2"] = x1 * PX, x2 * PX, y1 * PX, y2 * PX
+    fine = np.arange(0, 8, 1e-3)
+    fc = corners(fine)[..., 0]
+    first, last = fine[np.argmax((fc > 50).any(axis=1))], fine[np.argmax((fc > 50).all(axis=1))]
+    return rows, first, last
 
 
 def line_kin(*parts):
@@ -193,12 +254,10 @@ def line_kin(*parts):
     return add_kinematics(pd.concat(parts, ignore_index=True).astype(TRACK_DTYPES), LINE_SCENE)
 
 
-def test_solid_line_crossing_between_corner_crossings() -> None:
-    segs = solid_line_crossing.detect(
-        line_kin(lane_change(47, 53, 2, 3)), LINE_SCENE, ctx(8), cfg("solid_line_crossing")
-    )
-    # right corner (x + 1 m) reaches 50 m at t = 2.667, left corner (x - 1 m) at t = 3.333
-    assert len(segs) == 1 and near(segs[0], 2.667, 3.333, tol=0.05)
+def test_solid_line_crossing_from_first_to_last_wheel() -> None:
+    rows, first, last = lane_change(2.0)
+    segs = solid_line_crossing.detect(line_kin(rows), LINE_SCENE, ctx(8), cfg("solid_line_crossing"))
+    assert len(segs) == 1 and near(segs[0], first, last, tol=0.15), (segs, first, last)
 
 
 def test_touching_or_parallel_driving_is_not_a_crossing() -> None:
@@ -284,3 +343,15 @@ def test_allowed_movements_are_not_illegal() -> None:
         illegal_turn.detect(kin(right_turn(1, 55)), SCENE, ctx(14), cfg("illegal_turn")) == []
     )  # e2 may turn
     assert illegal_turn.detect(kin(straight(2, 60, 45, 8, 14)), SCENE, ctx(14), cfg("illegal_turn")) == []
+
+
+def test_turn_end_ignores_unknown_yaw_before_the_peak() -> None:
+    # Slow samples have no heading, so their yaw rate is NaN; the peak must be the real one (30 deg/s),
+    # not the NaN, or the turn would "end" at the 8 deg/s dip before the vehicle has even turned.
+    from roadwatch.events.illegal_turn import _turn_end
+
+    t = np.arange(6) * 0.1
+    yaw = np.array([12.0, np.nan, 8.0, 30.0, 25.0, 5.0])
+    heading = np.array([0.0, np.nan, 5.0, 40.0, 70.0, 90.0])
+    end = _turn_end(t, yaw, heading, 0, 4, cfg("illegal_turn")["params"], gap=0.15)
+    assert end == pytest.approx(0.45)  # midway between the last turning sample (0.4) and the calm one (0.5)

@@ -4,7 +4,8 @@ Contract:
 - `add_kinematics(tt, scene, mode)` returns the TrackTable sorted by (t, track_id) with footprints
   mapped to metres (`X, Y`) and `vx, vy, speed, accel, heading_deg, yaw_rate, kin_valid`, the zone
   columns `lane_id, on_road, on_sidewalk, in_crosswalk, crosswalk_id, in_intersection, in_no_uturn,
-  in_parking`, the front point `front_x, front_y` (SPEC §12.4) and `obj_id`.
+  in_parking`, the vehicle's ground extent (`front_x, front_y`, `rear_x, rear_y` in image px, the box
+  centre `cX, cY` in metres, `veh_len, veh_wid`; SPEC §12.35) and `obj_id`.
   mode="offline" smooths with Savitzky-Golay (Part A); mode="online" uses causal EMA (Part B), so
   every row depends only on earlier rows of its track.
   `accel` is signed along the heading (braking < 0). Below `heading_min_speed_mps` the heading is
@@ -27,6 +28,8 @@ from scipy.signal import savgol_filter
 from roadwatch.config import load_thresholds
 from roadwatch.scene.scene import Scene
 
+_DOWN_PROBE_PX = 20.0  # image step used to measure directions on the road plane
+
 PAIR_COLUMNS = ("track_a", "track_b", "cls_a", "cls_b", "dist", "closing_speed", "ttc")
 
 
@@ -41,13 +44,13 @@ def add_kinematics(
     foot = out[["fx", "fy"]].to_numpy(dtype=np.float64)
 
     _add_zone_columns(out, scene, foot)
-    _add_front_point(out, scene, foot)
 
     metric = scene.has("homography") and len(out) > 0
     xy = scene.to_world(foot) if metric else np.full((len(out), 2), np.nan)
     out["X"], out["Y"] = xy[:, 0], xy[:, 1]
     for col, values in _track_kinematics(out, xy, mode, cfg).items():
         out[col] = values
+    _add_vehicle_extent(out, scene, foot, cfg)
     out["obj_id"] = _persistence_ids(out, cfg)
 
     return out.sort_values(["t", "track_id"], kind="stable").reset_index(drop=True)
@@ -99,15 +102,89 @@ def _add_zone_columns(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None
     out["in_parking"] = scene.point_in("parking_zones", foot)
 
 
-def _add_front_point(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None:
-    """Footprint shifted by half the box height along the lane direction (SPEC §12.4)."""
-    shift = np.zeros_like(foot)
-    half_h = (out["y2"].to_numpy(dtype=np.float64) - out["y1"].to_numpy(dtype=np.float64)) / 2
-    lanes = out["lane_id"].to_numpy()
-    for lane_id, direction in scene.lane_directions().items():
-        in_lane = lanes == lane_id
-        shift[in_lane] = direction * half_h[in_lane, None]
-    out["front_x"], out["front_y"] = foot[:, 0] + shift[:, 0], foot[:, 1] + shift[:, 1]
+def _add_vehicle_extent(out: pd.DataFrame, scene: Scene, foot: np.ndarray, cfg: dict[str, Any]) -> None:
+    """Front and rear bumper points of every vehicle row from a ground-plane box model (SPEC §12.35).
+
+    A vehicle is a `length x width` rectangle on the road, oriented by its heading (world frame; held
+    while slow; the lane direction before it first moves). The box's bottom-centre (the footprint) is
+    the point of that rectangle nearest the camera, so the rectangle's centre lies behind the footprint,
+    away from the camera, by the rectangle's half-extent along the camera direction `u` (the road-plane
+    direction of "down the image" at the footprint):
+        centre = footprint - (L/2 |h.u| + W/2 |n.u|) u,   front = centre + L/2 h,   rear = centre - L/2 h.
+    A car driving toward the camera then has its front at the footprint, one driving away its rear.
+    Persons, rows without a heading or lane direction, and scenes without a homography fall back to the
+    footprint for both points.
+    """
+    n = len(out)
+    front, rear = foot.copy(), foot.copy()
+    centre = np.full((n, 2), np.nan)
+    dims = cfg["vehicle_dims_m"]
+    cls = out["cls"].astype(str).to_numpy()
+    length = np.array([dims.get(c, (0.0, 0.0))[0] for c in cls], dtype=np.float64)
+    width = np.array([dims.get(c, (0.0, 0.0))[1] for c in cls], dtype=np.float64)
+    if n and scene.has("homography"):
+        rad = np.radians(out["heading_deg"].to_numpy(dtype=np.float64))
+        h = np.stack([np.cos(rad), np.sin(rad)], axis=1)
+        missing = ~np.isfinite(h).all(axis=1)
+        if missing.any():
+            h[missing] = _lane_world_dirs(out["lane_id"].to_numpy()[missing], foot[missing], scene)
+        ok = (length > 0) & np.isfinite(h).all(axis=1)
+        if ok.any():
+            w0 = scene.to_world(foot[ok])
+            u = scene.to_world(foot[ok] + np.array([0.0, _DOWN_PROBE_PX])) - w0
+            u /= np.linalg.norm(u, axis=1, keepdims=True)
+            hk = h[ok]
+            nk = np.stack([-hk[:, 1], hk[:, 0]], axis=1)
+            half_l, half_w = length[ok] / 2, width[ok] / 2
+            depth = half_l * np.abs((hk * u).sum(axis=1)) + half_w * np.abs((nk * u).sum(axis=1))
+            c = w0 - depth[:, None] * u
+            centre[ok] = c
+            front[ok] = scene.to_image(c + half_l[:, None] * hk)
+            rear[ok] = scene.to_image(c - half_l[:, None] * hk)
+    out["front_x"], out["front_y"] = front[:, 0], front[:, 1]
+    out["rear_x"], out["rear_y"] = rear[:, 0], rear[:, 1]
+    out["cX"], out["cY"] = centre[:, 0], centre[:, 1]
+    out["veh_len"], out["veh_wid"] = length, width
+
+
+def _lane_world_dirs(lanes: np.ndarray, foot: np.ndarray, scene: Scene) -> np.ndarray:
+    """Unit lane direction on the road plane at each footprint (NaN outside lanes with a direction)."""
+    out = np.full((len(lanes), 2), np.nan)
+    for lane_id, d_img in scene.lane_directions().items():
+        rows = lanes == lane_id
+        if rows.any():
+            d = scene.to_world(foot[rows] + d_img * _DOWN_PROBE_PX) - scene.to_world(foot[rows])
+            out[rows] = d / np.linalg.norm(d, axis=1, keepdims=True)
+    return out
+
+
+def vehicle_corners(rows: pd.DataFrame, scene: Scene) -> np.ndarray:
+    """(N, 4, 2) image points of each row's ground rectangle: front-left, front-right, rear-right, rear-left.
+
+    Rows without a vehicle model (persons, no heading) get their footprint four times.
+    """
+    n = len(rows)
+    foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
+    out = np.repeat(foot[:, None, :], 4, axis=1)
+    centre = rows[["cX", "cY"]].to_numpy(dtype=np.float64)
+    ok = np.isfinite(centre).all(axis=1) & (rows["veh_len"].to_numpy() > 0)
+    if not n or not ok.any():
+        return out
+    front = rows[["front_x", "front_y"]].to_numpy(dtype=np.float64)[ok]
+    h = scene.to_world(front) - centre[ok]
+    h /= np.linalg.norm(h, axis=1, keepdims=True)
+    nvec = np.stack([-h[:, 1], h[:, 0]], axis=1)
+    half_l = rows["veh_len"].to_numpy(dtype=np.float64)[ok, None] / 2
+    half_w = rows["veh_wid"].to_numpy(dtype=np.float64)[ok, None] / 2
+    c = centre[ok]
+    world = [
+        c + half_l * h + half_w * nvec,
+        c + half_l * h - half_w * nvec,
+        c - half_l * h - half_w * nvec,
+        c - half_l * h + half_w * nvec,
+    ]
+    out[ok] = np.stack([scene.to_image(w) for w in world], axis=1)
+    return out
 
 
 def _track_bounds(track_ids: np.ndarray) -> list[tuple[int, int]]:

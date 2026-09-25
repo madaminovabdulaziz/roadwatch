@@ -56,6 +56,12 @@ kinematics:                   # SPEC §3
   persistence_max_gap_sec: 3.0
   persistence_max_dist_m: 2.0
   persistence_max_speed_mps: 0.5  # only tracks this slow at the break are linked (stationary objects)
+  vehicle_dims_m:             # ground-plane box per class, [length, width] (SPEC §12.35); others are points
+    car: [4.6, 1.8]
+    truck: [6.5, 2.3]         # COCO "truck" here is mostly pickups, vans and light lorries
+    bus: [12.0, 2.55]         # articulated buses are 18 m: their front point is a lower bound when receding
+    motorcycle: [2.1, 0.8]
+    bicycle: [1.8, 0.6]
 
 lane_flow:                    # RUNBOOK P1.2 (roadwatch/scene/flow.py, scripts/learn_lane_flow.py); pixels are native
   min_speed_px_s: 40.0        # slower image motion is jitter, not driving (about 1 m/s near the camera at 4K)
@@ -71,6 +77,9 @@ signal:                       # SPEC §4 / RUNBOOK P1.2 (roadwatch/scene/light.p
     yellow: [[15, 35]]
     green: [[40, 100]]
   min_saturation: 80          # pixels less saturated than this do not count as lamp colour
+  lit_min_value: 0.5          # ... nor pixels darker than this share of full brightness (colour excess)
+  lit_fraction: 0.15          # a lamp whose colour excess reaches this is lit (absolute test, SPEC §12.36)
+  fallback_min_excess: 0.05   # the relative test needs at least this much of the lamp's colour in its box
   min_contrast: 0.1           # a lamp whose score never varies more than this is never judged lit
   lit_threshold: 0.5          # the brightest lamp is lit if its score is past this share of its range
   baseline_percentiles: [5, 95]  # offline per-lamp "off" and "on" levels
@@ -79,6 +88,18 @@ signal:                       # SPEC §4 / RUNBOOK P1.2 (roadwatch/scene/light.p
     moving_speed_mps: 2.0
     stopped_speed_mps: 0.5
     queue_m: 20.0             # vehicles this close upstream of the stop line count as waiting
+
+registration:                 # SPEC §12.34: map the scene (clicked on the reference frame) into each video
+  work_width: 1920              # both images are matched at this width
+  frames: 5                     # Part A: frames spread over the video, median = background without traffic
+  sift_features: 6000
+  ratio: 0.7                    # Lowe ratio test
+  ransac_px: 2.0                # RANSAC reprojection threshold at work_width
+  min_inliers: 40
+  min_inlier_ratio: 0.3
+  max_corner_shift_frac: 0.15   # a frame corner moving more than this share of the width is not the same camera angle
+  online_retry_sec: 2.0         # Part B: a new frame joins the registration sample this often ...
+  online_max_frames: 5          # ... until the fit is confident or this many frames were tried
 
 runtime:                      # SPEC §11 and §12 (time budget)
   part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
@@ -138,8 +159,11 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     merge_gap: 1.0
     min_dur: 0.5
     params:
-      red_stable_sec: 0.5
-      min_after_red_onset_sec: 0.3
+      red_stable_sec: 3.0         # real red phases last > 10 s; shorter "reds" are occlusions (SPEC §12.36)
+      min_after_red_onset_sec: 0.5
+      max_entry_sec: 3.0          # after crossing, the front must enter the intersection this soon ...
+      stop_speed_mps: 1.0         # ... without stopping after the line: below this speed ...
+      stop_hold_sec: 1.0          # ... for this long (stop_line's stopped_sec) is stopping past the line
 
   wrong_way:
     enabled: false
@@ -196,6 +220,8 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     params:
       min_vehicle_speed_mps: 1.5
       ped_edge_dist_m: 1.0
+      conflict_lateral_m: 5.0     # pedestrian within this distance of the vehicle's axis (own + next lane) ...
+      conflict_ahead_m: 6.0       # ... and at most this far ahead of its front (SPEC §12.36)
 
   illegal_turn:
     enabled: false
@@ -206,6 +232,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       start_yaw_rate_dps: 10.0
       end_heading_tol_deg: 15.0
       end_stable_sec: 1.0
+      min_turn_deg: 45.0          # a movement with less heading change is not a turn
 
   solid_line_crossing:
     enabled: false
@@ -223,7 +250,9 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     params:
       stop_speed_mps: 0.5
       stopped_sec: 1.0
-      past_line_m: 0.3
+      past_line_m: 1.0            # front bumper this far past the line (covers homography error)
+      resume_speed_mps: 1.0       # moving again before green ends the event
+      max_gap_sec: 3.0            # a stopped vehicle may be hidden (pedestrians) this long
 
   congestion:
     enabled: false
