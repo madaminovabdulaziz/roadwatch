@@ -26,7 +26,7 @@ buttons still work.
 | `eda/summary.json`, `eda/<video>/*.json`, `eda/*.jpg` | `scripts/eda.py samples/` | EDA |
 | `results/index.json` + `results/<id>/{annotated.mp4, poster.jpg, events.json, risk.json}` | `scripts/render_samples.py` (P2.3) | Home, Results, Demo examples, Dashboard |
 | `results/gallery.json`, `results/failures.json`, `dashboard/event_heat.png` | P2.3 / P2.4 | Results, Dashboard |
-| `scene_overlay.png` | `scripts/render_scene.py --out web/public/data/scene_overlay.png` | Approach |
+| `scene_overlay.jpg` | `scripts/render_scene.py --out web/public/data/scene_overlay.jpg` | Approach |
 | `team.json` (+ photos in `team/`) | by hand | Team |
 | `report.json` | RUNBOOK P4.1 | Report |
 | `predictions_samples.json` | copy of the harness output | Links |
