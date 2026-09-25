@@ -245,7 +245,8 @@ class RiskCore:
         self.meta = dict(meta)
         self.fps = float(meta.get("fps") or 25.0)
         self.native = (int(meta["width"]), int(meta["height"]))
-        self.scene = self._scene if self._scene is not None else Scene.load()
+        clicked = self._scene if self._scene is not None else Scene.load()
+        self.scene = clicked.scaled_to(self.native)  # frames smaller than the reference: the demo
         self.metric = self.scene.has("homography")
         self.last_idx = -(10**9)
         self.ema: float | None = None
@@ -280,7 +281,7 @@ class RiskCore:
         }
         self.det_size = self.detector.frame_size_for(*self.native)
         # the scene is aligned to this video from the frames step() receives (causal, SPEC §12.34)
-        self.registration = OnlineRegistration(self.scene, self.native)
+        self.registration = OnlineRegistration(clicked, self.native)
 
     def step(self, frame: np.ndarray, t_sec: float) -> float:
         idx = int(round(t_sec * self.fps))

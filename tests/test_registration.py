@@ -170,3 +170,32 @@ def test_online_registration_waits_between_tries_and_gives_up() -> None:
         t += 0.5
     assert tries == CFG["online_max_frames"]
     assert t >= CFG["online_retry_sec"] * (CFG["online_max_frames"] - 1)
+
+
+# ------------------------------------------------------------------ videos smaller than the reference (demo)
+SMALL = (1280, 720)  # the demo re-encodes uploads to 720p; the scene was clicked at 4K
+
+
+def test_an_unregistered_scene_is_scaled_to_the_video_size() -> None:
+    scene = scene_with_reference()
+    small = align_scene(scene, None, SMALL)
+    np.testing.assert_allclose(
+        small.layers["stop_lines"][0]["line"], [[500, 1000 / 3], [2500 / 3, 1000 / 3]], atol=0.01
+    )
+    assert small.layers["image_size"] == list(SMALL)
+    ref_pts = np.array([[1500, 1300], [2100, 1700]], dtype=np.float64)
+    np.testing.assert_allclose(small.to_world(ref_pts / 3), scene.to_world(ref_pts), atol=1e-3)
+    assert align_scene(scene, None, NATIVE) is scene  # same size: untouched
+
+
+def test_online_registration_aligns_a_smaller_video() -> None:
+    scene = scene_with_reference()
+    online = OnlineRegistration(scene, SMALL)
+    frame = cv2.cvtColor(cv2.resize(video_frames(CAMERA_MOVE, n=1)[0], SMALL), cv2.COLOR_GRAY2BGR)
+    aligned = online.offer(frame, 0.0)
+    assert aligned is not None
+    np.testing.assert_allclose(
+        aligned.layers["stop_lines"][0]["line"],
+        moved(CAMERA_MOVE, scene.layers["stop_lines"][0]["line"]) / 3,
+        atol=1.5,
+    )

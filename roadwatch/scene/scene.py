@@ -125,6 +125,14 @@ class Scene:
         """Whether each step p0[i] -> p1[i] crosses the 2-point `line`."""
         return segments_cross(line, p0, p1)
 
+    def scaled_to(self, image_size: tuple[int, int]) -> Scene:
+        """This scene in the pixels of a resized copy of its image (itself if the size already matches
+        or the scene records no `image_size`)."""
+        size = self.layers.get("image_size")
+        if not size or (int(size[0]), int(size[1])) == (int(image_size[0]), int(image_size[1])):
+            return self
+        return self.transformed(np.diag([image_size[0] / size[0], image_size[1] / size[1], 1.0]), image_size)
+
     def transformed(self, H: np.ndarray, image_size: tuple[int, int]) -> Scene:
         """This scene with every pixel coordinate mapped through the 3x3 homography `H`.
 

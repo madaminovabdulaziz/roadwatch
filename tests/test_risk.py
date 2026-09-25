@@ -343,3 +343,10 @@ def test_on_time_part_b_never_skips() -> None:
     for i in range(int(8 * FPS)):
         core.step(frame, i / FPS)
     assert core.skipped == 0
+
+
+def test_a_scene_clicked_at_another_resolution_is_scaled_to_the_frames() -> None:
+    # the demo feeds 720p frames while configs/scene.json was clicked on the 4K reference frame
+    head_on = lambda t: [(20 + 10 * t, 45, 2), (80 - 10 * t, 45.5, 2)]  # noqa: E731
+    at_2x = NO_LANES.transformed(np.diag([2.0, 2.0, 1.0]), (2000, 2000))
+    assert run(head_on, 2.9, scene=at_2x) == run(head_on, 2.9)

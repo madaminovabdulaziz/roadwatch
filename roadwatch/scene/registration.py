@@ -12,8 +12,10 @@ Contract:
   `confident` = enough inliers, a high enough inlier share and a plausible camera move (no frame corner
   moves more than `max_corner_shift_frac` of the width).
 - `align_scene(scene, reg, video_size)` -> the scene in video pixels. A missing or unconfident
-  registration leaves the scene as clicked: the organizers state the test videos come from the same
-  camera and angle, so "no confident fit" means few usable features, not a different camera.
+  registration leaves the scene as clicked (only scaled if the video's size differs from the
+  reference's): the organizers state the test videos come from the same camera and angle, so "no
+  confident fit" means few usable features, not a different camera. The camera-move check compares
+  corners in reference pixels, so a smaller copy of the video (the demo's 720p) registers too.
 - `register_video(path)` (Part A) samples `frames` frames spread over the video. Part B registers on
   frames it is given (`OnlineRegistration`), so it stays causal.
 - Deterministic: SIFT, the matcher and RANSAC (cv2.setRNGSeed) give the same result for the same input.
@@ -141,22 +143,25 @@ def estimate(
     H = from_ref_work @ H_work @ to_work
     H /= H[2, 2]
     w, h = native_size
+    ref_w = cfg["work_width"] / ref_scale
     corners = np.float64([[0, 0], [w, 0], [w, h], [0, h]])
     moved = cv2.perspectiveTransform(corners.reshape(-1, 1, 2), H).reshape(-1, 2)
-    shift = float(np.max(np.hypot(*(moved - corners).T)))
+    # where the corners would land with the camera unmoved, in reference px (the video may be smaller)
+    shift = float(np.max(np.hypot(*(moved - corners * (ref_w / w)).T)))
     inliers = int(mask.sum())
     confident = (
         inliers >= cfg["min_inliers"]
         and inliers >= cfg["min_inlier_ratio"] * len(good)
-        and shift <= cfg["max_corner_shift_frac"] * w
+        and shift <= cfg["max_corner_shift_frac"] * ref_w
     )
     return Registration(H, inliers, len(good), shift, bool(confident))
 
 
 def align_scene(scene: Scene, reg: Registration | None, video_size: tuple[int, int]) -> Scene:
-    """The scene in this video's pixels (unchanged without a confident registration)."""
+    """The scene in this video's pixels: registered if the fit is confident, else as clicked (scaled
+    to the video's size when that differs from the reference's, e.g. the demo's 720p re-encode)."""
     if reg is None or not reg.confident:
-        return scene
+        return scene.scaled_to(video_size)
     return scene.transformed(np.linalg.inv(reg.video_to_ref), video_size)
 
 
@@ -183,16 +188,17 @@ def register_video(
 def scene_for_video(video_path: str | Path, scene: Scene | None = None) -> tuple[Scene, Registration | None]:
     """Part A: the scene aligned to one video, and the registration used (None if it failed)."""
     scene = scene if scene is not None else Scene.load()
-    if not can_register(scene):
-        return scene, None
     meta = probe(video_path)
+    size = (meta.width, meta.height)
+    if not can_register(scene):
+        return align_scene(scene, None, size), None
     try:
         reg = register_video(video_path, scene)
     except Exception:
         log.exception("%s: registration failed; using the scene as clicked", meta.video_id)
-        return scene, None
+        return align_scene(scene, None, size), None
     _log(meta.video_id, reg)
-    return align_scene(scene, reg, (meta.width, meta.height)), reg
+    return align_scene(scene, reg, size), reg
 
 
 def _log(video_id: str, reg: Registration | None) -> None:
