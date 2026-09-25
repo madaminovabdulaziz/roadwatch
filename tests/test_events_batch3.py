@@ -8,6 +8,9 @@ from __future__ import annotations
 import numpy as np
 
 from roadwatch.events import accident, near_miss, road_obstacle
+from roadwatch.features import add_kinematics
+from roadwatch.scene.scene import Scene
+from roadwatch.types import TRACK_DTYPES
 from tests.test_events_batch1 import FPS, SCENE, cfg, ctx, frames, kin, near, track
 
 
@@ -122,3 +125,28 @@ def test_carried_bags_brief_or_off_road_objects_are_not_obstacles() -> None:
         road_obstacle.detect(kin(walker, backpack, pavement_dog, blip), SCENE, ctx(8), cfg("road_obstacle"))
         == []
     )
+
+
+def leaving_through_the_bottom(t_end: float = 6.0):
+    """A car driving down the image at 10 m/s (off the lanes) and out through the bottom edge (y = 100 m).
+
+    The detector clips boxes to the frame, so once the car reaches the edge its footprint (box bottom)
+    freezes at the border while the car is still moving: the only thing that looks like a stop. Near
+    the camera a box includes the roof, so it stays clipped for about a second (here 10 m of box at
+    10 m/s); from 0.6 s on, the unfixed kinematics reported a single-vehicle crash here.
+    """
+    f = frames(0, t_end)
+    t = f / FPS
+    y = 50 + 10 * t  # metres; the bottom edge (1000 px) is reached at t = 5
+    rows = track(1, f, 250, y, w_px=40, h_px=100)
+    rows["y2"] = np.minimum(rows["y2"], 1000.0)
+    rows["fy"] = rows["y2"]
+    return rows[rows["y1"] < 1000.0].reset_index(drop=True)  # gone once the whole box is out
+
+
+def test_leaving_through_the_frame_edge_is_not_a_crash() -> None:
+    scene = Scene({**SCENE.layers, "image_size": [3000, 1000]})
+    tt = add_kinematics(leaving_through_the_bottom().astype(TRACK_DTYPES), scene)
+    assert tt.loc[tt["y2"] >= 999.0, "at_edge"].all()
+    assert not tt.loc[tt["at_edge"], "kin_valid"].any()
+    assert accident.detect(tt, scene, ctx(6), cfg("accident")) == []

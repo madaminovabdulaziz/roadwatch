@@ -52,6 +52,7 @@ kinematics:                   # SPEC §3
   savgol_order: 2
   ema_alpha: 0.5              # online smoothing (Part B)
   min_track_sec: 1.0          # shorter tracks get kin_valid = False
+  edge_margin_frac: 0.004     # boxes this close to the frame border are clipped: no kinematics (SPEC §12.38)
   heading_min_speed_mps: 1.0  # below this the heading is noise: hold the last one, yaw_rate = 0
   persistence_max_gap_sec: 3.0
   persistence_max_dist_m: 2.0

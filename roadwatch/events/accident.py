@@ -97,14 +97,23 @@ def shocks(rows: pd.DataFrame, t0: float, p: dict[str, Any]) -> set[str]:
     return kinds
 
 
-def confirmed(tracks: list[pd.DataFrame], t0: float, kinds: set[str], p: dict[str, Any]) -> bool:
+def confirmed(
+    tracks: list[pd.DataFrame], t0: float, kinds: set[str], p: dict[str, Any], exits: set[int]
+) -> bool:
+    """Whether a contact is a crash: a fall, a vehicle that stays stopped, or a track that vanishes.
+
+    A track that ends by reaching the frame edge (`exits`) just drove out of view; at this junction
+    that happens constantly, so it confirms nothing. Only a track lost mid-frame right after the
+    contact (a rider thrown down, a car knocked out of view) counts.
+    """
     if "fall" in kinds:
         return True
     vehicles = group_members("vehicles", "two_wheelers")
     for rows in tracks:
         t = rows["t"].to_numpy()
-        if t[-1] <= t0 + p["confirm_within_sec"]:
-            return True  # left the frame (or was lost) right after the contact
+        vanished = int(rows["track_id"].iloc[0]) not in exits
+        if vanished and t[-1] <= t0 + p["confirm_within_sec"]:
+            return True  # lost mid-frame right after the contact
         if str(rows["cls"].iloc[0]) not in vehicles:
             continue
         slow = rows["speed"].to_numpy() < p["confirm_speed_mps"]
@@ -159,11 +168,13 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     p = cfg["params"]
     valid = tt[tt["kin_valid"].to_numpy()]
     tracks = dict(by_track(valid))
+    last_rows = tt.sort_values(["track_id", "t"], kind="stable").groupby("track_id", sort=True).tail(1)
+    exits = set(last_rows.loc[last_rows["at_edge"].to_numpy(dtype=bool), "track_id"].astype(int))
     segments = []
     for (a, b), t0 in sorted(contacts(valid, p).items(), key=lambda kv: kv[1]):
         pair = [tracks[a], tracks[b]]
         kinds = shocks(pair[0], t0, p) | shocks(pair[1], t0, p)
-        if not kinds or not confirmed(pair, t0, kinds, p):
+        if not kinds or not confirmed(pair, t0, kinds, p, exits):
             continue
         score = min(1.0, 0.6 + 0.2 * len(kinds))
         segments.append(Segment(t0, end_time(pair, t0, p), LABEL, score, (a, b), {"shocks": sorted(kinds)}))

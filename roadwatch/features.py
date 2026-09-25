@@ -48,6 +48,7 @@ def add_kinematics(
     metric = scene.has("homography") and len(out) > 0
     xy = scene.to_world(foot) if metric else np.full((len(out), 2), np.nan)
     out["X"], out["Y"] = xy[:, 0], xy[:, 1]
+    out["at_edge"] = _at_edge(out, scene, cfg)
     for col, values in _track_kinematics(out, xy, mode, cfg).items():
         out[col] = values
     _add_vehicle_extent(out, scene, foot, cfg)
@@ -195,11 +196,33 @@ def _track_bounds(track_ids: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(np.r_[0, cuts].tolist(), np.r_[cuts, len(track_ids)].tolist(), strict=True))
 
 
+def _at_edge(out: pd.DataFrame, scene: Scene, cfg: dict[str, Any]) -> np.ndarray:
+    """Rows whose box touches the frame border (within edge_margin_frac of the frame size).
+
+    The detector clips boxes to the frame, so an object half out of view has a footprint that no longer
+    follows it: a car leaving through the bottom edge seems to stop dead. Without the frame size (no
+    `image_size` in the scene) nothing is flagged.
+    """
+    size = scene.layers.get("image_size")
+    if not size or out.empty:
+        return np.zeros(len(out), dtype=bool)
+    width, height = float(size[0]), float(size[1])
+    mx, my = cfg["edge_margin_frac"] * width, cfg["edge_margin_frac"] * height
+    return (
+        (out["x1"].to_numpy(dtype=np.float64) <= mx)
+        | (out["y1"].to_numpy(dtype=np.float64) <= my)
+        | (out["x2"].to_numpy(dtype=np.float64) >= width - mx)
+        | (out["y2"].to_numpy(dtype=np.float64) >= height - my)
+    )
+
+
 def _track_kinematics(
     out: pd.DataFrame, xy: np.ndarray, mode: str, cfg: dict[str, Any]
 ) -> dict[str, np.ndarray]:
+    """Per track, from its rows away from the frame edge only (edge rows keep NaN and kin_valid=False)."""
     n = len(out)
     t = out["t"].to_numpy(dtype=np.float64)
+    edge = out["at_edge"].to_numpy(dtype=bool)
     res = {c: np.full(n, np.nan) for c in ("vx", "vy", "speed", "accel", "heading_deg", "yaw_rate")}
     res["kin_valid"] = np.zeros(n, dtype=bool)
     if not np.isfinite(xy).all():
@@ -207,14 +230,18 @@ def _track_kinematics(
 
     smooth = _savgol_track if mode == "offline" else _ema_track
     for s, e in _track_bounds(out["track_id"].to_numpy()):
-        vel, acc = smooth(t[s:e], xy[s:e], cfg)
+        rows = np.arange(s, e)[~edge[s:e]]
+        if len(rows) < 2:
+            continue
+        tt, pos = t[rows], xy[rows]
+        vel, acc = smooth(tt, pos, cfg)
         speed = np.hypot(vel[:, 0], vel[:, 1])
-        heading, yaw_rate = _heading(t[s:e], vel, speed, cfg["heading_min_speed_mps"], mode)
+        heading, yaw_rate = _heading(tt, vel, speed, cfg["heading_min_speed_mps"], mode)
         unit = np.stack([np.cos(np.radians(heading)), np.sin(np.radians(heading))], axis=1)
-        res["vx"][s:e], res["vy"][s:e], res["speed"][s:e] = vel[:, 0], vel[:, 1], speed
-        res["accel"][s:e] = (acc * unit).sum(axis=1)  # NaN until the first moving sample
-        res["heading_deg"][s:e], res["yaw_rate"][s:e] = heading, yaw_rate
-        res["kin_valid"][s:e] = t[e - 1] - t[s] >= cfg["min_track_sec"]
+        res["vx"][rows], res["vy"][rows], res["speed"][rows] = vel[:, 0], vel[:, 1], speed
+        res["accel"][rows] = (acc * unit).sum(axis=1)  # NaN until the first moving sample
+        res["heading_deg"][rows], res["yaw_rate"][rows] = heading, yaw_rate
+        res["kin_valid"][rows] = tt[-1] - tt[0] >= cfg["min_track_sec"]
     return res
 
 
