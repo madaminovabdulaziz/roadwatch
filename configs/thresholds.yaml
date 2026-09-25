@@ -78,7 +78,7 @@ signal:                       # SPEC §4 / RUNBOOK P1.2 (roadwatch/scene/light.p
     yellow: [[15, 35]]
     green: [[40, 100]]
   min_saturation: 80          # pixels less saturated than this do not count as lamp colour
-  lit_min_value: 0.5          # ... nor pixels darker than this share of full brightness (colour excess)
+  lit_min_value: 0.25         # ... nor pixels darker than this share of full brightness (colour excess)
   lit_fraction: 0.15          # a lamp whose colour excess reaches this is lit (absolute test, SPEC §12.36)
   fallback_min_excess: 0.05   # the relative test needs at least this much of the lamp's colour in its box
   min_contrast: 0.1           # a lamp whose score never varies more than this is never judged lit
