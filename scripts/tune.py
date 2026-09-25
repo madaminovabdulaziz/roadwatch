@@ -53,7 +53,7 @@ def score_class(
     pred = {}
     for v in videos:
         segs = pipeline.run_rules(v["kin"], v["scene"], v["ctx"], th, labels=[label], force=True)
-        events = to_events(postprocess(segs, v["ctx"], th), v["ctx"].meta.duration, v["ongoing_tol"], th)
+        events = to_events(postprocess(segs, v["ctx"], th), v["ctx"].meta.duration, v["step"], th)
         pred[v["name"]] = {"events": events}
     gt_one = {name: {**g, "events": [e for e in g["events"] if e[2] == label]} for name, g in gt.items()}
     a = evaluate.evaluate_part_a(gt_one, pred)
@@ -86,7 +86,7 @@ def main() -> int:
                 "kin": pipeline.prepare(tt, cached_scene(Path(name).stem, args.cache, scene)),
                 "scene": cached_scene(Path(name).stem, args.cache, scene),
                 "ctx": VideoContext(meta, stride, cached_signals(Path(name).stem, args.cache, scene)),
-                "ongoing_tol": stride / meta.fps,
+                "step": stride / meta.fps,
             }
         )
 

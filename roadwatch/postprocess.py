@@ -78,10 +78,16 @@ def postprocess(
 def to_events(
     segments: list[Segment],
     duration: float,
-    ongoing_tol: float = 0.0,
+    step: float = 0.0,
     thresholds: dict[str, Any] | None = None,
 ) -> list[list]:
-    """Step 6: clipped, rounded, non-overlapping `[start, end, label]` lists of enabled classes only."""
+    """Step 6: clipped, rounded, non-overlapping `[start, end, label]` lists of enabled classes only.
+
+    `step` is the sample step (stride / fps). A segment still running at the last processed frame,
+    which can sit up to one step before the end, ends at the video's duration. The tolerance is 1.5
+    steps plus an epsilon, because (n - 3) / fps and n / fps - 3 / fps can differ in the last bit.
+    """
+    ongoing_tol = 1.5 * step + 1e-6 if step > 0 else 0.0
     thresholds = thresholds or load_thresholds()
     # thresholds["classes"] lists exactly the official ids (tests/test_config.py guards that)
     enabled = {label for label, cfg in thresholds["classes"].items() if cfg.get("enabled", False)}

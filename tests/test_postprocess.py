@@ -50,7 +50,7 @@ def test_classes_are_processed_separately_and_sorted() -> None:
 def test_to_events_clips_rounds_and_casts() -> None:
     th = thresholds(wrong_way=True)
     events = to_events(
-        [seg(-1, 2.00049), seg(50, 99.97), seg(120, 130)], duration=100.0, ongoing_tol=0.1, thresholds=th
+        [seg(-1, 2.00049), seg(50, 99.97), seg(120, 130)], duration=100.0, step=0.1, thresholds=th
     )
     assert events == [[0.0, 2.0, "wrong_way"], [50.0, 100.0, "wrong_way"]]  # 99.97 was ongoing at the end
     assert all(type(x) is float for e in events for x in e[:2])
@@ -76,3 +76,19 @@ def test_to_events_output_passes_the_official_format_check() -> None:
 def test_empty() -> None:
     assert postprocess([], CTX, thresholds()) == []
     assert to_events([], 10.0) == []
+
+
+def test_an_event_ongoing_at_the_last_processed_frame_ends_at_the_duration() -> None:
+    # The last processed frame is one sample step (3 frames) before the end; (n - 3) / fps and
+    # n / fps - 3 / fps differ in the last bit for some n, which used to end ~7% of such events 0.1 s
+    # short. Sweep 300 consecutive frame counts at 29.97 fps.
+    fps = 30000 / 1001
+    th = copy.deepcopy(load_thresholds())
+    th["classes"]["stopped_vehicle"]["enabled"] = True
+    short = []
+    for n in range(9000, 9300):
+        last = (n - 3) / fps
+        events = to_events([seg(10.0, last, "stopped_vehicle")], n / fps, step=3 / fps, thresholds=th)
+        if events[0][1] != round(n / fps, th["postprocess"]["round_decimals"]):
+            short.append(n)
+    assert short == []
