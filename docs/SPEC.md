@@ -276,3 +276,9 @@ Always return a finite float; on any exception return the last score.
     - A bin is jammed only if, besides the mean and per-lane count tests, no vehicle in the approach moves faster than `clear_speed_mps` (3 m/s). A discharging queue has cars accelerating away through it.
     - Only green bins that are still jammed count toward `green_persist_sec`.
     - With a known signal, green persistence is the only path. With the signal unknown throughout, a jam has to last `long_sec_unknown_signal` (90 s, to be set from the measured red duration once the signal timeline is seen on real footage).
+42. **Scene-aware guards for the batch-1 rules** (review of 2026-09-25; each false event reproduced, now a regression test in `tests/test_scene_guards.py`):
+    - **jaywalking.** A person qualifies only if, for at least `min_sec`, they are clearly on the road: 1 m inside the carriageway and from every island, and 1 m from every crosswalk. The event's boundaries stay where they step onto and off the road, the annotator convention, so the buffers cost no IoU (a 1 m inward shift would cost about 1.4 s of a 5 s crossing). Riding rows are excluded: faster than 3 m/s along the lane, or faster than 6 m/s in any direction. A jaywalker running straight across is still a pedestrian. Tracks matched to a two-wheeler in at least 30% of their frames, or riding in most of them, are riders throughout.
+    - **Traffic islands.** The new `islands` layer (refuges, the median) counts as pavement.
+    - **stopped_vehicle** excludes vehicles inside the intersection (left-turners yielding, spillback) and in the new `bus_stops` layer.
+    - **wrong_way** requires the footprint at least 1 m inside the wrong lane: in this oblique view a car hugging the centre line projects tens of cm into the opposing lane.
+    - `islands` and `bus_stops` are in the calibration tool, the overlay and `Scene.transformed`.

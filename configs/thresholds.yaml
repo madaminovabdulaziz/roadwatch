@@ -177,6 +177,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     params:
       min_speed_mps: 2.0
       max_cos_to_lane: -0.5
+      lateral_margin_m: 1.0      # the footprint must be this far inside the wrong lane (SPEC §12.42)
       min_sec: 1.0
 
   illegal_u_turn:
@@ -215,6 +216,12 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       rider_box_expand: 0.2
       rider_iou: 0.3
       in_vehicle_frac: 0.7
+      kerb_buffer_m: 1.0         # clearly on the road: this far inside the carriageway and from islands (SPEC §12.42)
+      crosswalk_buffer_m: 1.0    # ... and this far from every crosswalk
+      max_walk_speed_mps: 3.0    # faster than this along the lane is riding ...
+      along_lane_cos: 0.7        # ... 'along' = |cos(velocity, lane direction)| above this
+      max_run_speed_mps: 6.0     # faster than anyone runs, in any direction
+      rider_track_frac: 0.3      # a track matched to a two-wheeler this often is a rider throughout
 
   failure_to_yield:
     enabled: false

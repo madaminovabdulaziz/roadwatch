@@ -146,12 +146,14 @@ def _acceleration_vectors(rows: pd.DataFrame) -> np.ndarray:
 def _add_zone_columns(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None:
     out["lane_id"] = scene.lane_of(foot).astype(str)
     out["on_road"] = scene.point_in("carriageway", foot)
-    out["on_sidewalk"] = scene.point_in("sidewalks", foot)
+    # traffic islands (refuges, the median) are pavement for pedestrians (SPEC §12.6, §12.42)
+    out["on_sidewalk"] = scene.point_in("sidewalks", foot) | scene.point_in("islands", foot)
     out["crosswalk_id"] = scene.region_of("crosswalks", foot).astype(str)
     out["in_crosswalk"] = out["crosswalk_id"] != ""
     out["in_intersection"] = scene.point_in("intersection", foot)
     out["in_no_uturn"] = scene.point_in("no_u_turn_zones", foot)
     out["in_parking"] = scene.point_in("parking_zones", foot)
+    out["in_bus_stop"] = scene.point_in("bus_stops", foot)
 
 
 def _add_vehicle_extent(out: pd.DataFrame, scene: Scene, foot: np.ndarray, cfg: dict[str, Any]) -> None:

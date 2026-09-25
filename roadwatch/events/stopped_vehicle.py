@@ -107,7 +107,15 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     v = tt[in_group(tt, "vehicles")].sort_values(["obj_id", "t"], kind="stable").reset_index(drop=True)
     if v.empty:
         return []
-    v["ok"] = v["on_road"].to_numpy() & ~v["in_parking"].to_numpy() & ~queued(v, scene, ctx, p)
+    # waiting inside the intersection (a left-turner yielding, spillback) or dwelling at the bus stop is
+    # traffic, not a stopped vehicle (SPEC §12.42)
+    v["ok"] = (
+        v["on_road"].to_numpy()
+        & ~v["in_parking"].to_numpy()
+        & ~v["in_intersection"].to_numpy()
+        & ~v["in_bus_stop"].to_numpy()
+        & ~queued(v, scene, ctx, p)
+    )
     gap = max(max_gap(ctx), load_thresholds()["kinematics"]["persistence_max_gap_sec"])
 
     segments = []

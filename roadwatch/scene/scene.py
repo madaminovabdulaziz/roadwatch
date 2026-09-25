@@ -138,7 +138,7 @@ class Scene:
         for layer in ("carriageway", "intersection"):
             if layers.get(layer):
                 layers[layer] = _map_list(H, layers[layer])
-        for layer in ("sidewalks", "parking_zones", "no_u_turn_zones"):
+        for layer in ("sidewalks", "islands", "parking_zones", "bus_stops", "no_u_turn_zones"):
             if layers.get(layer):
                 layers[layer] = [_map_list(H, poly) for poly in layers[layer]]
         for layer, key in (("exits", "polygon"), ("crosswalks", "polygon"), ("solid_lines", "polyline")):

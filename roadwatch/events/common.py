@@ -17,6 +17,7 @@ Rules receive the TrackTable after `features.add_kinematics` (one row per track 
 - `crossings(t, pts, line, gap)`: steps of one track crossing a line, with interpolated times.
 - `past_line_m(scene, line, pts, lane_dir)`: signed metres beyond a line in the lane direction.
 - `dist_to_polygon_m(scene, polygon, pts)`: metres to a polygon's boundary (0 inside).
+- `depth_in_polygon_m(scene, polygon, pts)`: metres from inside points to the boundary (0 outside).
 - `stable_from(t, heading, start, tol, hold)`: first index whose heading then holds within `tol`.
 - `midpoint_before(t, i, gap)` / `midpoint_after(t, mask, i, gap)`: event boundaries at a sample
   transition are timed at the midpoint of the two samples (unbiased at ~10 Hz); across a gap longer than
@@ -146,17 +147,28 @@ def past_line_m(scene: Scene, line: np.ndarray, pts_img: np.ndarray, lane_dir_im
     return (scene.to_world(pts_img) - a) @ n
 
 
-def dist_to_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
-    """Distance in metres from image points to a polygon's boundary (0 inside), on the road plane."""
+def _edge_dist_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(distance in metres on the road plane to the polygon's boundary, inside mask) per image point."""
     poly = scene.to_world(np.asarray(polygon_img, dtype=np.float64))
-    p = scene.to_world(pts_img)
+    p = scene.to_world(np.asarray(pts_img, dtype=np.float64).reshape(-1, 2))
     best = np.full(len(p), np.inf)
     for a, b in zip(poly, np.roll(poly, -1, axis=0), strict=True):
         ab = b - a
         u = np.clip(((p - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
         best = np.minimum(best, np.linalg.norm(p - (a + u[:, None] * ab), axis=1))
-    best[points_in_polygon(p, poly)] = 0.0
-    return best
+    return best, points_in_polygon(p, poly)
+
+
+def dist_to_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
+    """Distance in metres from image points to a polygon's boundary (0 inside), on the road plane."""
+    dist, inside = _edge_dist_m(scene, polygon_img, pts_img)
+    return np.where(inside, 0.0, dist)
+
+
+def depth_in_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
+    """How far inside a polygon each image point is, in metres on the road plane (0 outside)."""
+    dist, inside = _edge_dist_m(scene, polygon_img, pts_img)
+    return np.where(inside, dist, 0.0)
 
 
 def stable_from(t: np.ndarray, heading: np.ndarray, start: int, tol: float, hold: float) -> int | None:
