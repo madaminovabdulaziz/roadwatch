@@ -80,3 +80,17 @@ def test_identical_input_gives_identical_ids() -> None:
         frames.append(dets(i, boxes, [CAR, PERSON, CAR]))
     first, second = run(frames), run(frames)
     assert [f.track_id.tolist() for f in first] == [f.track_id.tolist() for f in second]
+
+
+def test_a_bus_entering_at_the_frame_edge_stays_in_the_output() -> None:
+    # Replica of a bus entering C3902's right edge (720p, 10 Hz): the box grows leftwards while its right
+    # side is pinned at the border. ByteTrack keeps the track, but its Kalman box lags the growing
+    # width; supervision then matched tracks back to detections by IoU > 0.5 with that lagging box, so
+    # the bus vanished from the output although the tracker had updated it with this very detection.
+    BUS = 5
+    boxes = [(1279.0 - 60.0 - 20.0 * i, 295.0 - 1.8 * i, 1279.3, 408.0) for i in range(15)]
+    out = run([dets(i, [b], [BUS]) for i, b in enumerate(boxes)])
+    assert [len(f.track_id) for f in out] == [1] * 15
+    assert {int(f.track_id[0]) for f in out} == {1}
+    for f, b in zip(out, boxes, strict=True):
+        np.testing.assert_allclose(f.xyxy[0], b, atol=1e-3)
