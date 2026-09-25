@@ -48,6 +48,9 @@ CLASSES: list[str] = [
 def detect_events(video_path: str) -> list[list]:
     """Part A: every traffic event in one .mp4 as [start_sec, end_sec, label]; [] on any failure."""
     try:
+        from roadwatch import budget
+
+        budget.mark_start(Path(video_path).name)  # Part B paces against this video's real deadline
         from roadwatch.pipeline import detect_events as run_pipeline
 
         return run_pipeline(video_path)

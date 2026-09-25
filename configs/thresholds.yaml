@@ -298,6 +298,15 @@ risk:                         # SPEC §8 (Part B)
   stride: 3
   budget_factor: 0.6          # our step() compute may use this x video time; beyond it frames are skipped
   budget_slack_sec: 2.0       # (the harness decode, ~1-1.3x, and Part A, <= 1.2x, share the same 3x)
+  total_budget_factor: 2.7    # Part A start + this x duration = the deadline Part B paces against (SPEC §12.40)
+  pace_after_sec: 5.0         # project the finish only once this much video has been seen
+  vel_window_sec: 0.8         # online velocity = least-squares slope of the positions in this window ...
+  acc_window_sec: 1.0         # ... acceleration = slope of the velocities in this one
+  min_fit_samples: 4
+  min_fit_span_sec: 0.3
+  min_mover_speed_mps: 3.0    # a conflict needs one party moving at least this fast ...
+  min_track_age_sec: 1.0      # ... and both tracks at least this old
+  decel_floor_mps2: 4.0       # braking below this is everyday driving, not a warning sign
   max_pair_dist_m: 25.0
   min_closing_speed_mps: 1.0
   conflict_radius_m: 2.5       # paths closer than this at their closest approach are a conflict (SPEC §12.39) ...
@@ -305,7 +314,7 @@ risk:                         # SPEC §8 (Part B)
   person_classes: [person]
   ttc_scale_sec: 1.5          # g(ttc) = exp(-ttc / ttc_scale_sec)
   closing_speed_norm_mps: 10.0
-  decel_norm_mps2: 8.0
+  decel_norm_mps2: 4.0         # deceleration above the floor, normalised: floor + 4 m/s^2 counts fully
   weights:                    # solved from SPEC §8's targets, then rounded (SPEC §12.32):
     bias: -3.0                # calm traffic -> sigmoid(-3) = 0.047 (< 0.05)
     ttc: 5.5                  # TTC 1.0 s at 6 m/s closing -> 0.60; TTC 3 s -> 0.16
