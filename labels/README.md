@@ -18,3 +18,8 @@ C3905.MP4,,,none,watched fully, nothing happened
 
 Then `python scripts/labels_to_gt.py` validates every row and writes `labels/dev_gt.json`
 (nothing is written if a row is wrong), and `python scripts/eval_dev.py` scores the pipeline on it.
+
+Faster: open `scripts/label_tool.html` in a browser (double-click; nothing is uploaded). Pick the video, type
+your name, press a class key at an event's start and again at its end, then **Save CSV** and move the file into
+`labels/raw/`. Times stay editable in the table; a video with no events gets the **Video has no events** row. A
+720p copy labels the same timestamps if 4K stutters.

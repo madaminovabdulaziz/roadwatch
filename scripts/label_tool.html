@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RoadWatch labels</title>
+<!-- Dev-set labelling page (docs/SPEC.md §10, labels/README.md). Open this file in a browser, pick a video,
+     mark events, save labels/raw/<name>.csv. Nothing is uploaded: the video is read locally. -->
+<style>
+  :root { --bg:#111; --fg:#eee; --mut:#999; --acc:#4af; --line:#333; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px system-ui, sans-serif; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:12px; padding:12px; }
+  video { width:100%; background:#000; }
+  .bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:8px 0; }
+  button, input, select { background:#222; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 8px; font:inherit; }
+  button:hover { border-color:var(--acc); }
+  button.open { background:#523; border-color:#c55; }
+  #time { font:20px ui-monospace, monospace; min-width:130px; }
+  .classes button { min-width:150px; text-align:left; }
+  kbd { color:var(--acc); font:12px ui-monospace, monospace; margin-right:4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { border-bottom:1px solid var(--line); padding:3px 4px; text-align:left; }
+  td input { width:100%; box-sizing:border-box; padding:2px 4px; }
+  .mut { color:var(--mut); font-size:12px; }
+  aside { overflow:auto; max-height:calc(100vh - 24px); }
+</style>
+</head>
+<body>
+<main>
+<section>
+  <div class="bar">
+    <input type="file" id="file" accept="video/*">
+    <label>name <input id="name" size="10" placeholder="your name"></label>
+    <span class="mut">video id: <b id="vid">-</b></span>
+  </div>
+  <video id="v" controls preload="auto"></video>
+  <div class="bar">
+    <span id="time">0:00.0</span>
+    <button data-step="-1"><kbd>←</kbd>-1 frame</button>
+    <button data-step="1"><kbd>→</kbd>+1 frame</button>
+    <button data-jump="-1"><kbd>⇧←</kbd>-1 s</button>
+    <button data-jump="1"><kbd>⇧→</kbd>+1 s</button>
+    <button data-jump="-5"><kbd>J</kbd>-5 s</button>
+    <button data-jump="5"><kbd>L</kbd>+5 s</button>
+    <label>speed <select id="rate"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></label>
+    <span class="mut"><kbd>Space</kbd>play/pause</span>
+  </div>
+  <p class="mut">Press a class key once at the event's start and again at its end. Start/end follow the conventions in
+    labels/README.md (e.g. red_light starts when the front crosses the stop line). Times can be edited in the table.</p>
+  <div class="bar classes" id="classes"></div>
+</section>
+<aside>
+  <div class="bar">
+    <button id="save">Save CSV</button>
+    <button id="none">Video has no events</button>
+    <label class="mut">hints <input type="file" id="hints" accept=".csv"></label>
+  </div>
+  <p class="mut" id="status"></p>
+  <table><thead><tr><th>start</th><th>end</th><th>label</th><th>notes</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+  <h4>Hints <span class="mut">(rule guesses: check each one, never copy blindly)</span></h4>
+  <table><tbody id="hintrows"></tbody></table>
+</aside>
+</main>
+<script>
+const CLASSES = ["accident","near_miss","red_light","wrong_way","illegal_u_turn","stopped_vehicle","jaywalking",
+  "failure_to_yield","illegal_turn","solid_line_crossing","stop_line","congestion","road_obstacle","fire_smoke"];
+const KEYS = ["1","2","3","4","5","6","7","8","9","0","q","w","e","r"];
+const FPS = 30000 / 1001;
+const v = document.getElementById("v"), rowsEl = document.getElementById("rows");
+let videoId = "", events = [], open = {};
+
+const fmt = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+const parseT = s => { s = String(s).trim(); if (!s) return NaN;
+  const p = s.split(":"); return p.length === 2 ? 60 * +p[0] + +p[1] : +s; };
+const store = () => { try { localStorage.setItem("rw-labels:" + videoId, JSON.stringify(events)); } catch (e) {} };
+const load = () => { try { events = JSON.parse(localStorage.getItem("rw-labels:" + videoId)) || []; } catch (e) { events = []; } };
+
+function render() {
+  events.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+  rowsEl.innerHTML = "";
+  events.forEach((ev, i) => {
+    const tr = document.createElement("tr");
+    const cell = (key, val) => { const td = document.createElement("td"); const inp = document.createElement("input");
+      inp.value = val; inp.onchange = () => { ev[key] = key === "notes" || key === "label" ? inp.value : parseT(inp.value); store(); render(); };
+      td.appendChild(inp); return td; };
+    tr.appendChild(cell("start", ev.label === "none" ? "" : fmt(ev.start)));
+    tr.appendChild(cell("end", ev.label === "none" || ev.end == null ? "" : fmt(ev.end)));
+    tr.appendChild(cell("label", ev.label));
+    tr.appendChild(cell("notes", ev.notes || ""));
+    const td = document.createElement("td");
+    const go = document.createElement("button"); go.textContent = "▶"; go.title = "seek to start";
+    go.onclick = () => { if (ev.start != null) v.currentTime = ev.start; };
+    const del = document.createElement("button"); del.textContent = "✕";
+    del.onclick = () => { events.splice(i, 1); store(); render(); };
+    td.append(go, del); tr.appendChild(td); rowsEl.appendChild(tr);
+  });
+  document.querySelectorAll("#classes button").forEach(b => b.classList.toggle("open", b.dataset.cls in open));
+  const bad = events.filter(e => e.label !== "none" && !(e.end > e.start));
+  document.getElementById("status").textContent =
+    `${events.length} rows` + (Object.keys(open).length ? ` | open: ${Object.keys(open).join(", ")}` : "") +
+    (bad.length ? ` | ${bad.length} row(s) need end > start` : "");
+}
+
+function toggle(cls) {
+  if (!videoId) return;
+  const t = Math.round(v.currentTime * 10) / 10;
+  if (cls in open) { const ev = open[cls]; ev.end = Math.max(t, ev.start + 0.1); delete open[cls]; }
+  else { const ev = { start: t, end: null, label: cls, notes: "" }; events.push(ev); open[cls] = ev; }
+  events = events.filter(e => e.label !== "none"); store(); render();
+}
+
+const box = document.getElementById("classes");
+CLASSES.forEach((c, i) => { const b = document.createElement("button"); b.dataset.cls = c;
+  b.innerHTML = `<kbd>${KEYS[i]}</kbd>${c}`; b.onclick = () => toggle(c); box.appendChild(b); });
+
+document.getElementById("file").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  v.src = URL.createObjectURL(f);
+  videoId = f.name.replace(/_720p(?=\.mp4$)/i, "").replace(/\.mp4$/i, ".MP4");
+  document.getElementById("vid").textContent = videoId; open = {}; load(); render();
+};
+document.getElementById("rate").onchange = e => { v.playbackRate = +e.target.value; };
+document.querySelectorAll("[data-step]").forEach(b => b.onclick = () => { v.pause(); v.currentTime += +b.dataset.step / FPS; });
+document.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => { v.currentTime += +b.dataset.jump; });
+v.ontimeupdate = () => { document.getElementById("time").textContent = fmt(v.currentTime); };
+setInterval(v.ontimeupdate, 50);
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  const k = e.key.toLowerCase();
+  if (k === " ") { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+  else if (k === "arrowleft" || k === "arrowright") { e.preventDefault(); const s = k === "arrowleft" ? -1 : 1;
+    if (e.shiftKey) v.currentTime += s; else { v.pause(); v.currentTime += s / FPS; } }
+  else if (k === "j") v.currentTime -= 5;
+  else if (k === "l") v.currentTime += 5;
+  else if (KEYS.includes(k)) toggle(CLASSES[KEYS.indexOf(k)]);
+});
+
+document.getElementById("none").onclick = () => {
+  if (!videoId) return; events = [{ start: null, end: null, label: "none", notes: "watched fully, nothing happened" }];
+  open = {}; store(); render();
+};
+
+document.getElementById("save").onclick = () => {
+  const name = document.getElementById("name").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!name) { alert("Type your name first (the file becomes labels/raw/<name>.csv)."); return; }
+  if (Object.keys(open).length) { alert("Close the open events first: " + Object.keys(open).join(", ")); return; }
+  const q = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const lines = ["video,start,end,label,notes"].concat(events.map(e => e.label === "none"
+    ? `${videoId},,,none,${q(e.notes || "")}` : `${videoId},${e.start.toFixed(1)},${e.end.toFixed(1)},${e.label},${q(e.notes || "")}`));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+  a.download = `${name}_${videoId.replace(/\.mp4$/i, "")}.csv`; a.click();
+};
+
+document.getElementById("hints").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const lines = (await f.text()).trim().split(/\r?\n/).slice(1);
+  const body = document.getElementById("hintrows"); body.innerHTML = "";
+  lines.forEach(line => { const [video, start, end, guess] = line.split(",");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${start}</td><td>${end}</td><td>${guess}</td>`;
+    const td = document.createElement("td"); const b = document.createElement("button"); b.textContent = "▶";
+    b.onclick = () => { v.currentTime = Math.max(0, parseT(start) - 2); }; td.appendChild(b); tr.appendChild(td);
+    body.appendChild(tr); });
+};
+</script>
+</body>
+</html>
