@@ -300,6 +300,9 @@ risk:                         # SPEC §8 (Part B)
   budget_slack_sec: 2.0       # (the harness decode, ~1-1.3x, and Part A, <= 1.2x, share the same 3x)
   max_pair_dist_m: 25.0
   min_closing_speed_mps: 1.0
+  conflict_radius_m: 2.5       # paths closer than this at their closest approach are a conflict (SPEC §12.39) ...
+  conflict_radius_person_m: 2.0  # ... or this when a pedestrian is involved
+  person_classes: [person]
   ttc_scale_sec: 1.5          # g(ttc) = exp(-ttc / ttc_scale_sec)
   closing_speed_norm_mps: 10.0
   decel_norm_mps2: 8.0

@@ -1,16 +1,22 @@
 """near_miss: Sharp braking or swerving to avoid a collision, with no contact.
 
-Trigger: A pair with TTC < max_ttc_sec and closing speed > min_closing_speed_mps, followed by
-evasive action (deceleration > evasive_decel_mps2 or yaw rate > evasive_yaw_rate_dps); separation
-stays > min_separation_m and no accident follows within no_accident_within_sec.
+Trigger: a pair on a collision course (their paths meet: closest point of approach under the
+collision radius, features.pair_features) with closing speed > min_closing_speed_mps and a
+constant-velocity TTC < max_ttc_sec at the moment one of them reacts with evasive action
+(deceleration > evasive_decel_mps2 or yaw rate > evasive_yaw_rate_dps); separation stays >
+min_separation_m and no accident follows within no_accident_within_sec (SPEC §12.39).
 Start: onset of evasive action (deceleration first > onset_decel_mps2).
 End: separation increasing and TTC > end_ttc_sec.
 
 Details:
 - Pairs involve at least one vehicle or two-wheeler; TTC and closing speed come from
-  features.pair_features on each processed frame.
+  features.pair_features on each processed frame. A near miss is a collision the reaction prevented,
+  so imminence is judged by the constant-velocity TTC (`ttc_cv`), and judged at the reaction: the
+  first sample past the evasive threshold (on smoothed kinematics this tracks the true TTC at the
+  start of braking within ~0.15 s). A planned stop, begun while the obstacle was still > 1.5 s away,
+  is not a near miss even though its TTC shrinks during the stop.
 - Evasive action is searched on either moving object within evasive_window_sec of the first trigger.
-  Its onset walks back from the first evasive sample while the deceleration stays above
+  Its onset (the start) walks back from the first evasive sample while the deceleration stays above
   onset_decel_mps2; a pure swerve starts at its first evasive sample.
 - "No accident within": the pair's minimum separation over the episode and the following
   no_accident_within_sec must stay above min_separation_m.
@@ -47,7 +53,7 @@ def triggers(tt: pd.DataFrame, p: dict[str, Any]) -> dict[tuple[int, int], tuple
             continue
         pairs = pair_features(f)
         hot = pairs[
-            (pairs["ttc"] < p["max_ttc_sec"])
+            (pairs["ttc_cv"] < p["max_ttc_sec"])
             & (pairs["closing_speed"] > p["min_closing_speed_mps"])
             & (pairs["cls_a"].isin(movers) | pairs["cls_b"].isin(movers))
         ]
@@ -55,12 +61,18 @@ def triggers(tt: pd.DataFrame, p: dict[str, Any]) -> dict[tuple[int, int], tuple
         for r in hot.itertuples():
             key = (int(min(r.track_a, r.track_b)), int(max(r.track_a, r.track_b)))
             first, best = out.get(key, (t, np.inf))
-            out[key] = (first, min(best, float(r.ttc)))
+            out[key] = (first, min(best, float(r.ttc_cv)))
     return out
 
 
-def evasive_onset(rows: pd.DataFrame, t0: float, p: dict[str, Any], gap: float) -> float | None:
-    """Onset of the first evasive action in [t0 - window, t0 + window], or None."""
+def evasive_action(
+    rows: pd.DataFrame, t0: float, p: dict[str, Any], gap: float
+) -> tuple[float, float] | None:
+    """(onset, reaction) of the first evasive action in [t0 - window, t0 + window], or None.
+
+    reaction = the first sample past the evasive threshold; onset = where it began (walked back while
+    the deceleration stays above onset_decel_mps2).
+    """
     t = rows["t"].to_numpy()
     decel = -rows["accel"].to_numpy(dtype=np.float64)
     yaw = np.abs(rows["yaw_rate"].to_numpy(dtype=np.float64))
@@ -71,11 +83,12 @@ def evasive_onset(rows: pd.DataFrame, t0: float, p: dict[str, Any], gap: float) 
     k = int(hits[0])
     while k > 0 and decel[k - 1] > p["onset_decel_mps2"] and t[k] - t[k - 1] <= gap:
         k -= 1
-    return float(t[k])
+    return float(t[k]), float(t[hits[0]])
 
 
 def pair_series(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
-    """Joint samples of two tracks: t, distance, closing speed and TTC (inf when not closing)."""
+    """Joint samples of two tracks: t, distance, closing speed and constant-velocity TTC (inf when
+    not closing)."""
     j = a[["frame", "t", "X", "Y", "vx", "vy"]].merge(
         b[["frame", "X", "Y", "vx", "vy"]], on="frame", suffixes=("_a", "_b")
     )
@@ -98,17 +111,23 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     gap = max_gap(ctx)
     segments = []
     for (a, b), (t0, ttc_min) in sorted(triggers(valid, p).items(), key=lambda kv: kv[1][0]):
-        onsets = [
-            onset
+        actions = [
+            action
             for tid in (a, b)
             if str(tracks[tid]["cls"].iloc[0]) in movers
-            for onset in [evasive_onset(tracks[tid], t0, p, gap)]
-            if onset is not None
+            for action in [evasive_action(tracks[tid], t0, p, gap)]
+            if action is not None
         ]
-        if not onsets:
-            continue
-        start = min(onsets)
         s = pair_series(tracks[a], tracks[b])
+        # imminent at the reaction: the constant-velocity TTC at the last joint sample up to it
+        actions = [
+            (onset, reaction)
+            for onset, reaction in actions
+            if (before := s[s["t"] <= reaction + 1e-9]).size and before["ttc"].iloc[-1] < p["max_ttc_sec"]
+        ]
+        if not actions:
+            continue
+        start = min(onset for onset, _ in actions)
         after = s[s["t"] >= t0]
         closest = int(after["dist"].to_numpy().argmin())
         diverging = after.iloc[closest:]

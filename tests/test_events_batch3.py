@@ -102,6 +102,27 @@ def test_gentle_stop_or_contact_is_not_a_near_miss() -> None:
     assert near_miss.detect(crash, SCENE, ctx(10), cfg("near_miss")) == []
 
 
+def test_a_firm_but_planned_stop_is_not_a_near_miss() -> None:
+    # 12 m/s, braking at 4.5 m/s^2 from 1.7 s before reaching the stopped car, stopping 4 m short: firm,
+    # but begun while the car ahead was > 1.5 s away. Its TTC falls below 1.5 s during the stop and the
+    # deceleration passes 4 m/s^2, which used to be enough; imminence is now judged at the reaction.
+    firm = emergency_brake(4.5, x_start=100 - 12 * 1.7 - 12 * 1.92, t_brake=1.92)
+    assert near_miss.detect(firm, SCENE, ctx(10), cfg("near_miss")) == []
+
+
+def test_turning_past_a_waiting_pedestrian_is_not_a_near_miss() -> None:
+    # A car turns at 7 m/s on a 12 m radius (33 deg/s, above the 25 deg/s "evasive" yaw rate) past a
+    # pedestrian standing 3 m outside its path. The radial TTC of this pass-by is 0.8 s, but the paths
+    # never come within 3 m: no conflict (closest point of approach).
+    f = frames(0, 8)
+    t = f / FPS
+    cx, cy, radius = 120.0, 55.0, 12.0
+    ang = -np.pi / 2 + (7.0 / radius) * t  # starts heading east at (120, 43), turns north-east
+    car = track(1, f, cx + radius * np.cos(ang), cy + radius * np.sin(ang))
+    walker = track(2, f, cx + 15.0 * np.cos(0.4), cy + 15.0 * np.sin(0.4), cls="person", w_px=8, h_px=17)
+    assert near_miss.detect(kin(car, walker), SCENE, ctx(8), cfg("near_miss")) == []
+
+
 # ---------------------------------------------------------------------------------------- road_obstacle
 def test_animal_on_the_road_with_a_short_occlusion() -> None:
     f1, f2 = frames(0, 3), frames(4, 8)  # hidden between 3 and 4 s (< gone_sec)

@@ -215,6 +215,49 @@ def test_pair_features_head_on_ttc() -> None:
     assert pairs["ttc"].is_monotonic_increasing
 
 
+def test_pair_features_keeps_only_real_conflicts() -> None:
+    # Adjacent-lane overtaking closes fast but the paths stay 3.5 m apart; a follower braking to stop
+    # behind a stopped car never reaches it; the same follower not braking does.
+    rows = pd.DataFrame(
+        {
+            "track_id": [1, 2, 3, 4, 5, 6],
+            "cls": ["car"] * 6,
+            "X": [0.0, 10.0, 100.0, 115.0, 200.0, 215.0],
+            "Y": [0.0, 3.5, 0.0, 0.0, 0.0, 0.0],
+            "vx": [15.0, 5.0, 10.0, 0.0, 10.0, 0.0],
+            "vy": [0.0] * 6,
+            "accel": [0.0, 0.0, -4.0, 0.0, 0.0, 0.0],
+            "heading_deg": [0.0] * 6,
+        }
+    )
+    pairs = pair_features(rows)
+    keys = set(zip(pairs["track_a"], pairs["track_b"], strict=True))
+    assert (1, 2) not in keys  # overtaking in the next lane: closest approach 3.5 m
+    stopping = pairs[(pairs["track_a"] == 3) & (pairs["track_b"] == 4)].iloc[0]
+    assert stopping["ttc"] == np.inf  # stops within 12.5 m of its 15 m gap: no contact predicted ...
+    assert stopping["ttc_cv"] == pytest.approx(1.5)  # ... though it would be 1.5 s away without braking
+    row = pairs[(pairs["track_a"] == 5) & (pairs["track_b"] == 6)].iloc[0]
+    assert row["ttc"] == pytest.approx(1.5) and row["d_cpa"] == pytest.approx(0.0, abs=1e-9)
+    assert pairs["ttc"].is_monotonic_increasing
+
+
+def test_braking_aware_ttc_when_braking_is_not_enough() -> None:
+    # 20 m/s toward a stopped car 20 m ahead, braking at 4 m/s^2: 20 t - 2 t^2 = 20 -> t = 1.127 s
+    rows = pd.DataFrame(
+        {
+            "track_id": [1, 2],
+            "cls": ["car", "car"],
+            "X": [0.0, 20.0],
+            "Y": [0.0, 0.0],
+            "vx": [20.0, 0.0],
+            "vy": [0.0, 0.0],
+            "accel": [-4.0, 0.0],
+            "heading_deg": [0.0, 0.0],
+        }
+    )
+    assert pair_features(rows)["ttc"].iloc[0] == pytest.approx(5 - 15**0.5, rel=1e-6)
+
+
 def test_pair_features_needs_two_rows() -> None:
     assert pair_features(
         pd.DataFrame({"track_id": [1], "cls": ["car"], "X": [0.0], "Y": [0.0], "vx": [1.0], "vy": [0.0]})

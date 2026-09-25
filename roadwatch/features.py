@@ -30,7 +30,18 @@ from roadwatch.scene.scene import Scene
 
 _DOWN_PROBE_PX = 20.0  # image step used to measure directions on the road plane
 
-PAIR_COLUMNS = ("track_a", "track_b", "cls_a", "cls_b", "dist", "closing_speed", "ttc")
+PAIR_COLUMNS = (
+    "track_a",
+    "track_b",
+    "cls_a",
+    "cls_b",
+    "dist",
+    "closing_speed",
+    "ttc",
+    "ttc_cv",
+    "t_cpa",
+    "d_cpa",
+)
 
 
 def add_kinematics(
@@ -58,7 +69,23 @@ def add_kinematics(
 
 
 def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
-    """Converging pairs among one frame's rows (needs `X, Y, vx, vy`), sorted by TTC."""
+    """Pairs on a collision course among one frame's rows, sorted by time to collision (SPEC §12.39).
+
+    Needs `X, Y, vx, vy` (metres, m/s); uses acceleration from `ax, ay`, or from `accel` along
+    `heading_deg`, when present (else none). A pair is kept only if all of these hold:
+    - it is within `max_pair_dist_m` and closing faster than `min_closing_speed_mps`;
+    - its paths really meet: the closest point of approach at constant relative velocity (`t_cpa` from
+      now, `d_cpa` apart) is under the collision radius, `conflict_radius_m` (vehicles) or
+      `conflict_radius_person_m` (a pedestrian involved). A car turning past someone 3 m outside its
+      path, or overtaking in the next lane, closes fast but is no conflict;
+    Two times to collision are returned:
+    - `ttc_cv` = d / c, at constant velocity: how imminent the collision would be without any reaction
+      (near_miss asks this at the moment the evasive action starts);
+    - `ttc`, braking-aware: the time for the distance to reach zero with the current relative
+      acceleration along the line between them, the smallest positive t with c t + a t^2 / 2 = d,
+      computed as 2d / (c + sqrt(c^2 + 2 a d)); inf when braking stops the approach short. A planned
+      stop behind a queue never predicts contact (Part B's risk uses this one).
+    """
     cfg = load_thresholds()["risk"]
     cols = ["X", "Y", "vx", "vy"]
     rows = frame_rows[np.isfinite(frame_rows[cols].to_numpy(dtype=np.float64)).all(axis=1)]
@@ -67,17 +94,25 @@ def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
 
     pos = rows[["X", "Y"]].to_numpy(dtype=np.float64)
     vel = rows[["vx", "vy"]].to_numpy(dtype=np.float64)
+    acc = _acceleration_vectors(rows)
     i, j = np.triu_indices(len(rows), k=1)
-    rel_pos = pos[j] - pos[i]
+    rel_pos, rel_vel, rel_acc = pos[j] - pos[i], vel[j] - vel[i], acc[j] - acc[i]
     dist = np.hypot(rel_pos[:, 0], rel_pos[:, 1])
-    rel_vel = vel[j] - vel[i]
+    speed2 = (rel_vel**2).sum(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
         closing = np.where(dist > 0, -(rel_pos * rel_vel).sum(axis=1) / dist, 0.0)
-        ttc = dist / closing
-    keep = (dist < cfg["max_pair_dist_m"]) & (closing > cfg["min_closing_speed_mps"])
+        closing_acc = np.where(dist > 0, -(rel_pos * rel_acc).sum(axis=1) / dist, 0.0)
+        t_cpa = np.where(speed2 > 0, np.maximum(0.0, -(rel_pos * rel_vel).sum(axis=1) / speed2), 0.0)
+        disc = closing**2 + 2 * closing_acc * dist
+        ttc = np.where(disc >= 0, 2 * dist / (closing + np.sqrt(np.maximum(disc, 0.0))), np.inf)
+        ttc_cv = dist / closing
+    d_cpa = np.hypot(*(rel_pos + rel_vel * t_cpa[:, None]).T)
 
     track = rows["track_id"].to_numpy()
     cls = rows["cls"].astype(str).to_numpy()
+    person = np.isin(cls, cfg["person_classes"])
+    radius = np.where(person[i] | person[j], cfg["conflict_radius_person_m"], cfg["conflict_radius_m"])
+    keep = (dist < cfg["max_pair_dist_m"]) & (closing > cfg["min_closing_speed_mps"]) & (d_cpa < radius)
     pairs = pd.DataFrame(
         {
             "track_a": track[i][keep],
@@ -87,9 +122,25 @@ def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
             "dist": dist[keep],
             "closing_speed": closing[keep],
             "ttc": ttc[keep],
+            "ttc_cv": ttc_cv[keep],
+            "t_cpa": t_cpa[keep],
+            "d_cpa": d_cpa[keep],
         }
     )
     return pairs.sort_values(["ttc", "track_a", "track_b"], kind="stable").reset_index(drop=True)
+
+
+def _acceleration_vectors(rows: pd.DataFrame) -> np.ndarray:
+    """(N, 2) acceleration in metres/s^2: `ax, ay` if given, else `accel` along the heading, else 0."""
+    if {"ax", "ay"} <= set(rows.columns):
+        acc = rows[["ax", "ay"]].to_numpy(dtype=np.float64)
+    elif {"accel", "heading_deg"} <= set(rows.columns):
+        rad = np.radians(rows["heading_deg"].to_numpy(dtype=np.float64))
+        along = rows["accel"].to_numpy(dtype=np.float64)
+        acc = along[:, None] * np.stack([np.cos(rad), np.sin(rad)], axis=1)
+    else:
+        acc = np.zeros((len(rows), 2))
+    return np.nan_to_num(acc, nan=0.0)
 
 
 def _add_zone_columns(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None:
