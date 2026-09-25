@@ -101,6 +101,9 @@ registration:                 # SPEC §12.34: map the scene (clicked on the refe
   online_retry_sec: 2.0         # Part B: a new frame joins the registration sample this often ...
   online_max_frames: 5          # ... until the fit is confident or this many frames were tried
 
+events:                       # shared by the rules (roadwatch/events/common.py)
+  max_gap_sec: 1.0            # a hole in a track up to this long does not split a run (SPEC §12.37)
+
 runtime:                      # SPEC §11 and §12 (time budget)
   part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
   perception_budget_factor: 1.0  # Part A perception paces itself to finish within this x duration

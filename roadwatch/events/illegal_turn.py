@@ -30,7 +30,15 @@ import pandas as pd
 
 from roadwatch.config import class_cfg
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, crossings, in_group, max_gap, midpoint_before, stable_from
+from roadwatch.events.common import (
+    by_track,
+    crossings,
+    in_group,
+    max_gap,
+    midpoint_before,
+    midpoint_gap,
+    stable_from,
+)
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -105,7 +113,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                 left_lane = np.flatnonzero((lanes[k:] != entry) & (lanes[k:] != ""))
                 turning = np.flatnonzero(yaw[k:] > p["start_yaw_rate_dps"])
                 start = k + min([int(x[0]) for x in (left_lane, turning) if len(x)], default=0)
-                end_t = _turn_end(t, yaw, heading, start, first_exit, p, gap)
+                end_t = _turn_end(t, yaw, heading, start, first_exit, p, midpoint_gap(ctx))
                 segments.append(
                     Segment(
                         float(t[start]),

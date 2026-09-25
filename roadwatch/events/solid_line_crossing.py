@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, in_group, max_gap, midpoint_before
+from roadwatch.events.common import by_track, in_group, max_gap, midpoint_before, midpoint_gap
 from roadwatch.features import vehicle_corners
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
@@ -52,7 +52,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
         return []
     p = cfg["params"]
     v = tt[in_group(tt, "vehicles", "two_wheelers") & tt["kin_valid"].to_numpy()]
-    gap = max_gap(ctx)
+    gap, mid = max_gap(ctx), midpoint_gap(ctx)
     segments = []
     for line in scene.layers.get("solid_lines") or []:
         poly = scene.to_world(np.asarray(line["polyline"], dtype=np.float64))
@@ -66,7 +66,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                 seg = poly[s : s + 2]
                 sides = _sides(seg, corners, margin)
                 full = np.where((sides == 1).all(axis=1), 1, np.where((sides == -1).all(axis=1), -1, 0))
-                event = _crossing(t, sides, full, centre, seg, inter, p, gap)
+                event = _crossing(t, sides, full, centre, seg, inter, p, gap, mid)
                 if event is not None:
                     segments.append(Segment(*event, LABEL, 1.0, (tid,), {"line": line["id"]}))
     return segments
@@ -81,6 +81,7 @@ def _crossing(
     inter: np.ndarray,
     p: dict[str, Any],
     gap: float,
+    mid: float,
 ) -> tuple[float, float] | None:
     """(start, end) of the first full side change of one track across one segment, else None."""
     settled = np.flatnonzero(full != 0)
@@ -95,5 +96,5 @@ def _crossing(
             continue
         # first sample after i where a corner left the starting side; the end is the settled sample j
         started = i + 1 + int(np.flatnonzero((sides[i + 1 : j + 1] != full[i]).any(axis=1))[0])
-        return midpoint_before(t, started, gap), midpoint_before(t, j, gap)
+        return midpoint_before(t, started, mid), midpoint_before(t, j, mid)
     return None

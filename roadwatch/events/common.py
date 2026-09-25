@@ -2,8 +2,11 @@
 
 Rules receive the TrackTable after `features.add_kinematics` (one row per track per processed frame).
 - `in_group(tt, *groups)`: rows whose class belongs to tracker groups from thresholds.yaml.
-- `max_gap(ctx)`: the largest time step that still counts as continuous (1.5 processed-frame steps),
-  so a single lost detection does not split a run.
+- `max_gap(ctx)`: the largest hole in a track that still counts as continuous: `events.max_gap_sec`
+  (about ByteTrack's lost-track buffer), or 2.5 sample steps if that is longer. Missed detections leave
+  no row, and the pacer thins frames on slow machines; neither may split a run (SPEC §12.37).
+- `midpoint_gap(ctx)`: the largest step between two samples whose midpoint may time a boundary
+  (1.5 sample steps); longer holes time it at the sample itself.
 - `runs(t, mask, gap)`: (first, last) index pairs of consecutive True samples, split where the mask is
   False or the time step exceeds `gap`.
 - `by_track(tt, key)`: (id, rows sorted by t) per track (or per `obj_id` for persistence-merged objects).
@@ -47,6 +50,10 @@ def in_group(tt: pd.DataFrame, *groups: str) -> np.ndarray:
 
 
 def max_gap(ctx: VideoContext) -> float:
+    return max(load_thresholds()["events"]["max_gap_sec"], 2.5 * ctx.stride / ctx.meta.fps)
+
+
+def midpoint_gap(ctx: VideoContext) -> float:
     return 1.5 * ctx.stride / ctx.meta.fps
 
 

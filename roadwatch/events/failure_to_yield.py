@@ -35,6 +35,7 @@ from roadwatch.events.common import (
     max_gap,
     midpoint_after,
     midpoint_before,
+    midpoint_gap,
     runs,
 )
 from roadwatch.events.jaywalking import excluded_persons
@@ -104,7 +105,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     if not peds_by_cw:
         return []
     v = tt[in_group(tt, "vehicles", "two_wheelers")]
-    gap = max_gap(ctx)
+    gap, mid = max_gap(ctx), midpoint_gap(ctx)
     segments = []
     for tid, rows in by_track(v):
         t = rows["t"].to_numpy()
@@ -126,6 +127,6 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                     default=0.0,
                 )
                 if score > 0:
-                    start, end = midpoint_before(t, a, gap), midpoint_after(t, overlap, a, gap)
+                    start, end = midpoint_before(t, a, mid), midpoint_after(t, overlap, a, mid)
                     segments.append(Segment(start, end, LABEL, score, (tid,), {"crosswalk": cw_id}))
     return segments

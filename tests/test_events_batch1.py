@@ -111,6 +111,24 @@ def test_wrong_way_starts_at_lane_entry_and_ends_at_last_sighting() -> None:
     assert segs[0].score > 0.9
 
 
+# Real tracks have holes: ByteTrack writes no row for a frame where the detection was missed, and the
+# pacer thins frames on a slow machine. A hole shorter than events.max_gap_sec must not split an event.
+HOLES = {
+    "every 4th detection missed": lambda n: np.arange(n) % 4 != 3,
+    "every 2nd frame": lambda n: np.arange(n) % 2 == 0,
+}
+
+
+@pytest.mark.parametrize("keep", HOLES.values(), ids=HOLES.keys())
+def test_wrong_way_survives_missed_detections(keep) -> None:
+    f = frames(0, 9)
+    t = f / FPS
+    y = np.clip(25 + 20 * (t - 4), 25, 45)
+    rows = track(1, f, 150 - 8 * t, y)
+    segs = wrong_way.detect(kin(rows[keep(len(rows))]), SCENE, ctx(10), cfg("wrong_way"))
+    assert len(segs) == 1 and near(segs[0], 4.75, t[-1], tol=0.35), segs
+
+
 def test_wrong_way_negative_cases() -> None:
     f = frames(0, 8)
     t = f / FPS
@@ -127,6 +145,15 @@ def test_jaywalking_from_stepping_on_to_leaving_the_road() -> None:
     tt = kin(track(1, f, 50, 17 + 2 * t, cls="person", w_px=8, h_px=17))
     segs = jaywalking.detect(tt, SCENE, ctx(25), cfg("jaywalking"))
     assert len(segs) == 1 and near(segs[0], 1.5, 21.5)
+
+
+@pytest.mark.parametrize("keep", HOLES.values(), ids=HOLES.keys())
+def test_jaywalking_survives_missed_detections(keep) -> None:
+    f = frames(0, 25)
+    t = f / FPS
+    rows = track(1, f, 50, 17 + 2 * t, cls="person", w_px=8, h_px=17)
+    segs = jaywalking.detect(kin(rows[keep(len(rows))]), SCENE, ctx(25), cfg("jaywalking"))
+    assert len(segs) == 1 and near(segs[0], 1.5, 21.5, tol=0.35), segs
 
 
 def test_jaywalking_negative_cases() -> None:

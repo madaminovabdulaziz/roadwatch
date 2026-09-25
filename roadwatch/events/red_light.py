@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, crossings, in_group, max_gap, midpoint_after, runs
+from roadwatch.events.common import by_track, crossings, in_group, max_gap, midpoint_after, midpoint_gap, runs
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -61,7 +61,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     p = cfg["params"]
     dirs = scene.lane_directions()
     v = tt[in_group(tt, "vehicles", "two_wheelers")]
-    gap = max_gap(ctx)
+    gap, mid = max_gap(ctx), midpoint_gap(ctx)
     segments = []
     for sl in scene.layers.get("stop_lines") or []:
         timeline = ctx.signal_timeline.get(str(sl.get("signal", "")), [])
@@ -93,7 +93,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                 entry = k - 1 + int(entered[0])
                 if _stopped(t[k : entry + 1], speed[k : entry + 1], p, gap):
                     continue  # stopped between the line and the intersection: stop_line's business
-                end = midpoint_after(t, occupied, entry, gap)
+                end = midpoint_after(t, occupied, entry, mid)
                 score = float(min(1.0, 0.5 + since / 2.0))
                 segments.append(Segment(t_cross, end, LABEL, score, (tid,), {"stop_line": sl["id"]}))
     return segments
