@@ -1,21 +1,17 @@
 # CPU profile of the demo backend, deep-merged over configs/thresholds.yaml via ROADWATCH_OVERRIDES
-# (WEBSITE_SPEC "Stack"). The submission never reads this file.
-video:
-  stride_part_a: 6            # 5 detections per second at 30 fps: a 2-minute clip is 600 frames
+# (WEBSITE_SPEC "Stack"). The submission never reads this file. Detection and tracking run at the
+# submission's 10 Hz (stride 3): at 5 Hz ByteTrack never confirmed 8 % of the confident boxes on C3902
+# (fast vehicles entering), so the demo analyses a shorter window instead (SPEC §12.30).
 perception:
-  imgsz: 640
+  imgsz: 640                  # YOLO11m on 640x360: ~0.3 s/frame on 2 Apple M1 threads, ~0.5 s on 2 vCPUs
   half: false
   batch_size: 4
 
 demo:                         # read by demo/ only
-  max_upload_mb: 100
-  max_duration_sec: 120
+  max_upload_mb: 2048         # raw camera files are ~1 GB a minute (4K, ~140 Mbps): accept them as they are
+  max_process_sec: 20         # uploads of any length; the first 20 s are analysed (est. 3-5 min on a 2-vCPU Space)
+  max_job_sec: 900            # a job still running after 15 min ends with a readable error
   max_queue: 5
   expiry_sec: 3600
   work_height: 720            # uploads are re-encoded to H.264 at this height before processing
-  camera_match:
-    width: 960                # both images are compared at this width
-    orb_features: 2000
-    ratio: 0.75               # Lowe's ratio test
-    min_inliers: 40           # RANSAC homography inliers needed to call it the same camera
-    frames: 9                 # median of this many upload frames
+  work_fps: 30                # ... and higher frame rates decimated to about this
