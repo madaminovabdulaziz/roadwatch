@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import evaluate  # noqa: E402
 from roadwatch import pipeline  # noqa: E402
 from roadwatch.config import CACHE_DIR, CONFIG_DIR, REPO_ROOT, load_thresholds  # noqa: E402
-from roadwatch.devdata import cached_signals, load_cached  # noqa: E402
+from roadwatch.devdata import cached_scene, cached_signals, load_cached  # noqa: E402
 from roadwatch.events.base import VideoContext  # noqa: E402
 from roadwatch.postprocess import postprocess, to_events  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
@@ -53,7 +53,7 @@ def score_class(
     pred = {}
     for v in videos:
         segs = pipeline.run_rules(v["kin"], v["scene"], v["ctx"], th, labels=[label], force=True)
-        events = to_events(postprocess(segs, v["ctx"], th), v["ctx"].meta.duration, v["ongoing_tol"], th)
+        events = to_events(postprocess(segs, v["ctx"], th), v["ctx"].meta.duration, v["step"], th)
         pred[v["name"]] = {"events": events}
     gt_one = {name: {**g, "events": [e for e in g["events"] if e[2] == label]} for name, g in gt.items()}
     a = evaluate.evaluate_part_a(gt_one, pred)
@@ -83,10 +83,10 @@ def main() -> int:
         videos.append(
             {
                 "name": name,
-                "kin": pipeline.prepare(tt, scene),
-                "scene": scene,
+                "kin": pipeline.prepare(tt, cached_scene(Path(name).stem, args.cache, scene)),
+                "scene": cached_scene(Path(name).stem, args.cache, scene),
                 "ctx": VideoContext(meta, stride, cached_signals(Path(name).stem, args.cache, scene)),
-                "ongoing_tol": stride / meta.fps,
+                "step": stride / meta.fps,
             }
         )
 

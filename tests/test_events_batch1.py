@@ -111,6 +111,24 @@ def test_wrong_way_starts_at_lane_entry_and_ends_at_last_sighting() -> None:
     assert segs[0].score > 0.9
 
 
+# Real tracks have holes: ByteTrack writes no row for a frame where the detection was missed, and the
+# pacer thins frames on a slow machine. A hole shorter than events.max_gap_sec must not split an event.
+HOLES = {
+    "every 4th detection missed": lambda n: np.arange(n) % 4 != 3,
+    "every 2nd frame": lambda n: np.arange(n) % 2 == 0,
+}
+
+
+@pytest.mark.parametrize("keep", HOLES.values(), ids=HOLES.keys())
+def test_wrong_way_survives_missed_detections(keep) -> None:
+    f = frames(0, 9)
+    t = f / FPS
+    y = np.clip(25 + 20 * (t - 4), 25, 45)
+    rows = track(1, f, 150 - 8 * t, y)
+    segs = wrong_way.detect(kin(rows[keep(len(rows))]), SCENE, ctx(10), cfg("wrong_way"))
+    assert len(segs) == 1 and near(segs[0], 4.75, t[-1], tol=0.35), segs
+
+
 def test_wrong_way_negative_cases() -> None:
     f = frames(0, 8)
     t = f / FPS
@@ -127,6 +145,15 @@ def test_jaywalking_from_stepping_on_to_leaving_the_road() -> None:
     tt = kin(track(1, f, 50, 17 + 2 * t, cls="person", w_px=8, h_px=17))
     segs = jaywalking.detect(tt, SCENE, ctx(25), cfg("jaywalking"))
     assert len(segs) == 1 and near(segs[0], 1.5, 21.5)
+
+
+@pytest.mark.parametrize("keep", HOLES.values(), ids=HOLES.keys())
+def test_jaywalking_survives_missed_detections(keep) -> None:
+    f = frames(0, 25)
+    t = f / FPS
+    rows = track(1, f, 50, 17 + 2 * t, cls="person", w_px=8, h_px=17)
+    segs = jaywalking.detect(kin(rows[keep(len(rows))]), SCENE, ctx(25), cfg("jaywalking"))
+    assert len(segs) == 1 and near(segs[0], 1.5, 21.5, tol=0.35), segs
 
 
 def test_jaywalking_negative_cases() -> None:
@@ -217,9 +244,56 @@ def jam(duration: float, n_per_lane: int = 2, moving: bool = False, lanes=(45, 5
 
 
 def test_long_jam_is_congestion() -> None:
-    segs = congestion.detect(kin(*jam(70)), SCENE, ctx(80), cfg("congestion"))
+    # Without lamp information a long red and a jam look alike, so only a standstill longer than any
+    # plausible red phase (long_sec_unknown_signal) counts.
+    segs = congestion.detect(kin(*jam(100)), SCENE, ctx(110), cfg("congestion"))
     assert len(segs) == 1 and segs[0].meta["direction"] == "EB"
-    assert segs[0].start == 0.0 and abs(segs[0].end - 70) <= 1.0
+    assert segs[0].start == 0.0 and abs(segs[0].end - 100) <= 1.0
+
+
+# As at the real junction, the approach lanes end at the stop line (x = 95 m): departing cars leave them.
+STOP_LINE_SCENE = Scene(
+    {
+        **SCENE.layers,
+        "lanes": [
+            {**lane, "polygon": rect(0, 40, 95, 50) if lane["id"] == "e1" else rect(0, 50, 95, 60)}
+            if lane["id"] in ("e1", "e2")
+            else lane
+            for lane in SCENE.layers["lanes"]
+        ],
+    }
+)
+
+
+def discharging_queue(n_per_lane: int, t_green: float, headway: float, lanes=(45, 55)) -> list[pd.DataFrame]:
+    """A red-light queue that clears normally: car k of each lane pulls away at t_green + k * headway,
+    accelerating at 2 m/s^2 up to 12 m/s (cars 7 m apart, the front one 2 m before the line)."""
+    f = frames(0, t_green + 40)
+    t = f / FPS
+    out, tid = [], 1
+    for y in lanes:
+        for k in range(n_per_lane):
+            go = np.clip(t - (t_green + k * headway), 0, None)
+            ramp = np.minimum(go, 6.0)  # 2 m/s^2 for 6 s, then 12 m/s
+            x = 93 - 7 * k + ramp**2 + 12 * (go - ramp)
+            out.append(track(tid, f, x, y))
+            tid += 1
+    return out
+
+
+@pytest.mark.parametrize(("n_per_lane", "headway"), [(8, 2.0), (8, 2.5), (10, 2.5)])
+def test_a_red_queue_that_clears_normally_is_not_congestion(n_per_lane: int, headway: float) -> None:
+    # A 30 s red, then green: the queue discharges car by car. Its clearing tail (speeds between
+    # 1.5 and 3 m/s) used to count as "the jam persisted into green".
+    timeline = {"L1": [(0.0, 30.0, "red"), (30.0, 80.0, "green")]}
+    parts = discharging_queue(n_per_lane, 30.0, headway)
+    queue = add_kinematics(pd.concat(parts, ignore_index=True).astype(TRACK_DTYPES), STOP_LINE_SCENE)
+    assert congestion.detect(queue, STOP_LINE_SCENE, ctx(70, timeline), cfg("congestion")) == []
+
+
+def test_a_long_red_phase_is_not_congestion_when_the_signal_is_known() -> None:
+    timeline = {"L1": [(0.0, 80.0, "red")]}
+    assert congestion.detect(kin(*jam(65)), SCENE, ctx(70, timeline), cfg("congestion")) == []
 
 
 def test_short_jam_needs_green_persistence() -> None:

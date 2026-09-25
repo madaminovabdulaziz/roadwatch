@@ -11,6 +11,10 @@ Contract:
   .parquet written by scripts/cache_tracks.py.
 - `video_meta(name, videos_dir, cache_dir)` probes the video if it is here, else uses the cache sidecar
   (the samples may only live on Kaggle).
+- `cached_scene(stem, cache_dir, scene)` aligns the clicked scene to a cached video with the stored
+  registration (SPEC §12.34); scripts run rules on cached tracks with it.
+- `tracks_in_reference(tt, stem, cache_dir)` maps a cached video's boxes into reference pixels, so
+  tracks of different recordings can be pooled (EDA).
 - `cached_signals(stem, cache_dir, scene)` returns the cached signal timeline, or {} when it was measured
   with other lamp boxes than the current scene's.
 - `diff_predictions(a, b)` lists the differences between two harness outputs (determinism and
@@ -27,6 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 import pandas as pd
 
 from roadwatch.scene.light import SignalTimeline
@@ -169,6 +175,39 @@ def cached_signals(stem: str, cache_dir: Path, scene: Scene) -> SignalTimeline:
     if data.get("signals") != (scene.layers.get("signals") or []):
         return {}
     return {sid: [tuple(seg) for seg in segs] for sid, segs in data.get("signal_timeline", {}).items()}
+
+
+def cached_scene(stem: str, cache_dir: Path, scene: Scene) -> Scene:
+    """`scene` aligned to one cached video with the registration scripts/cache_tracks.py stored."""
+    from roadwatch.scene.registration import Registration, align_scene
+
+    sidecar = cache_dir / f"{stem}.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.exists() else {}
+    if not data.get("registration"):
+        return scene
+    v = data["video"]
+    return align_scene(
+        scene, Registration.from_summary(data["registration"]), (int(v["width"]), int(v["height"]))
+    )
+
+
+def tracks_in_reference(tt: pd.DataFrame, stem: str, cache_dir: Path) -> pd.DataFrame:
+    """TrackTable of one cached video with boxes and footprints in reference-frame pixels.
+
+    Tracks of different recordings only line up (pooled heatmaps, flow fields) after this mapping.
+    """
+    from roadwatch.scene.registration import Registration
+
+    sidecar = cache_dir / f"{stem}.json"
+    data = json.loads(sidecar.read_text(encoding="utf-8")) if sidecar.exists() else {}
+    reg = Registration.from_summary(data["registration"]) if data.get("registration") else None
+    if reg is None or not reg.confident or tt.empty:
+        return tt
+    out = tt.copy()
+    for x, y in (("x1", "y1"), ("x2", "y2"), ("fx", "fy")):
+        pts = cv2.perspectiveTransform(out[[x, y]].to_numpy(np.float64).reshape(-1, 1, 2), reg.video_to_ref)
+        out[x], out[y] = pts[:, 0, 0].astype(np.float32), pts[:, 0, 1].astype(np.float32)
+    return out
 
 
 def video_meta(name: str, videos_dir: Path, cache_dir: Path) -> VideoMeta | None:

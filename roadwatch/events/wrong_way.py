@@ -19,12 +19,28 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, in_group, lane_world_dirs, max_gap, runs
+from roadwatch.events.common import by_track, depth_in_polygon_m, in_group, lane_world_dirs, max_gap, runs
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
 LABEL = "wrong_way"
 REQUIRED_LAYERS: tuple[str, ...] = ("homography", "lanes")
+
+
+def _depth_in_own_lane(v: pd.DataFrame, scene: Scene) -> np.ndarray:
+    """Metres each footprint is inside the lane it is in (0 outside every lane).
+
+    A car driving correctly next to the centre line can project a few tens of cm into the opposing lane
+    in this oblique view; only being clearly inside it (lateral_margin_m) is wrong-way (SPEC §12.42).
+    """
+    depth = np.zeros(len(v))
+    foot = v[["fx", "fy"]].to_numpy(dtype=np.float64)
+    lanes = v["lane_id"].to_numpy()
+    for lane in scene.layers.get("lanes") or []:
+        rows = lanes == str(lane["id"])
+        if rows.any():
+            depth[rows] = depth_in_polygon_m(scene, lane["polygon"], foot[rows])
+    return depth
 
 
 def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any]) -> list[Segment]:
@@ -39,7 +55,12 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     speed = v["speed"].to_numpy(dtype=np.float64)
     with np.errstate(invalid="ignore", divide="ignore"):
         v["cos"] = (vel * lane_dir).sum(axis=1) / speed
-    v["wrong"] = v["kin_valid"] & (speed > p["min_speed_mps"]) & (v["cos"] < p["max_cos_to_lane"])
+    v["wrong"] = (
+        v["kin_valid"]
+        & (speed > p["min_speed_mps"])
+        & (v["cos"] < p["max_cos_to_lane"])
+        & (_depth_in_own_lane(v, scene) >= p["lateral_margin_m"])
+    )
 
     gap = max_gap(ctx)
     segments = []

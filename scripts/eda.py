@@ -31,7 +31,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from roadwatch.config import CACHE_DIR, CONFIG_DIR, REPO_ROOT, load_thresholds  # noqa: E402
-from roadwatch.devdata import cached_meta  # noqa: E402
+from roadwatch.devdata import cached_meta, cached_scene, tracks_in_reference  # noqa: E402
 from roadwatch.features import add_kinematics  # noqa: E402
 from roadwatch.scene.flow import flow_field, step_velocities  # noqa: E402
 from roadwatch.scene.light import SignalStateEstimator  # noqa: E402
@@ -225,13 +225,16 @@ def main() -> int:
         summary.append(stats)
         _dump(args.out / stem / "counts.json", counts_per_second(tt, meta.duration))
         _dump(args.out / stem / "density.json", density_per_minute(tt, meta.duration))
-        if scene.has("homography"):
-            _dump(args.out / stem / "speeds.json", speed_histograms(add_kinematics(tt, scene)))
-        if args.signals and path and scene.has("signals"):
+        video_scene = cached_scene(stem, args.cache, scene)
+        if video_scene.has("homography"):
+            _dump(args.out / stem / "speeds.json", speed_histograms(add_kinematics(tt, video_scene)))
+        if args.signals and path and video_scene.has("signals"):
             frames = read_window(path, 0.0, math.inf, stride=6, skip_nonref=True)
-            _dump(args.out / stem / "signals.json", SignalStateEstimator(scene).timeline(frames))
-        # track ids restart per video: offset them so pooled tracks never join across videos
-        pooled.append(tt.assign(track_id=tt["track_id"].astype(np.int64) + id_offset))
+            _dump(args.out / stem / "signals.json", SignalStateEstimator(video_scene).timeline(frames))
+        # recordings are framed differently: pool tracks in reference-frame pixels (SPEC §12.34), and
+        # offset track ids, which restart per video, so pooled tracks never join across videos
+        in_ref = tracks_in_reference(tt, stem, args.cache)
+        pooled.append(in_ref.assign(track_id=in_ref["track_id"].astype(np.int64) + id_offset))
         id_offset += int(tt["track_id"].max()) + 1 if len(tt) else 0
         print(f"{stem}: {len(tt)} track rows, {tt['track_id'].nunique()} tracks", flush=True)
     _dump(args.out / "summary.json", {"videos": summary})

@@ -16,7 +16,9 @@ from roadwatch.scene.scene import Scene
 LAYER_COLOURS: dict[str, tuple[int, int, int]] = {
     "carriageway": (128, 128, 128),
     "sidewalks": (180, 130, 70),
+    "islands": (150, 200, 120),
     "parking_zones": (200, 80, 200),
+    "bus_stops": (40, 180, 240),
     "intersection": (0, 200, 255),
     "lanes": (80, 200, 80),
     "exits": (255, 200, 0),
@@ -30,7 +32,9 @@ LAYER_COLOURS: dict[str, tuple[int, int, int]] = {
 _FILL_ORDER = (
     "carriageway",
     "sidewalks",
+    "islands",
     "parking_zones",
+    "bus_stops",
     "intersection",
     "lanes",
     "exits",

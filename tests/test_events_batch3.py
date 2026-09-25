@@ -8,6 +8,9 @@ from __future__ import annotations
 import numpy as np
 
 from roadwatch.events import accident, near_miss, road_obstacle
+from roadwatch.features import add_kinematics
+from roadwatch.scene.scene import Scene
+from roadwatch.types import TRACK_DTYPES
 from tests.test_events_batch1 import FPS, SCENE, cfg, ctx, frames, kin, near, track
 
 
@@ -99,6 +102,27 @@ def test_gentle_stop_or_contact_is_not_a_near_miss() -> None:
     assert near_miss.detect(crash, SCENE, ctx(10), cfg("near_miss")) == []
 
 
+def test_a_firm_but_planned_stop_is_not_a_near_miss() -> None:
+    # 12 m/s, braking at 4.5 m/s^2 from 1.7 s before reaching the stopped car, stopping 4 m short: firm,
+    # but begun while the car ahead was > 1.5 s away. Its TTC falls below 1.5 s during the stop and the
+    # deceleration passes 4 m/s^2, which used to be enough; imminence is now judged at the reaction.
+    firm = emergency_brake(4.5, x_start=100 - 12 * 1.7 - 12 * 1.92, t_brake=1.92)
+    assert near_miss.detect(firm, SCENE, ctx(10), cfg("near_miss")) == []
+
+
+def test_turning_past_a_waiting_pedestrian_is_not_a_near_miss() -> None:
+    # A car turns at 7 m/s on a 12 m radius (33 deg/s, above the 25 deg/s "evasive" yaw rate) past a
+    # pedestrian standing 3 m outside its path. The radial TTC of this pass-by is 0.8 s, but the paths
+    # never come within 3 m: no conflict (closest point of approach).
+    f = frames(0, 8)
+    t = f / FPS
+    cx, cy, radius = 120.0, 55.0, 12.0
+    ang = -np.pi / 2 + (7.0 / radius) * t  # starts heading east at (120, 43), turns north-east
+    car = track(1, f, cx + radius * np.cos(ang), cy + radius * np.sin(ang))
+    walker = track(2, f, cx + 15.0 * np.cos(0.4), cy + 15.0 * np.sin(0.4), cls="person", w_px=8, h_px=17)
+    assert near_miss.detect(kin(car, walker), SCENE, ctx(8), cfg("near_miss")) == []
+
+
 # ---------------------------------------------------------------------------------------- road_obstacle
 def test_animal_on_the_road_with_a_short_occlusion() -> None:
     f1, f2 = frames(0, 3), frames(4, 8)  # hidden between 3 and 4 s (< gone_sec)
@@ -108,6 +132,24 @@ def test_animal_on_the_road_with_a_short_occlusion() -> None:
     ]
     segs = road_obstacle.detect(kin(*dog), SCENE, ctx(10), cfg("road_obstacle"))
     assert len(segs) == 1 and near(segs[0], 0.0, 8.0) and segs[0].score == 1.0
+
+
+def test_birds_and_moving_bags_are_not_obstacles() -> None:
+    f = frames(0, 8)
+    t = f / FPS
+    pigeon = track(1, f, 130, 45, cls="bird", w_px=4, h_px=3)  # sits on the road for 8 s
+    blown = track(2, f, 60 + 2.0 * t, 50, cls="suitcase", w_px=6, h_px=6)  # moving: carried, not lying
+    assert road_obstacle.detect(kin(pigeon, blown), SCENE, ctx(8), cfg("road_obstacle")) == []
+
+
+def test_a_lying_object_is_one_event_across_an_id_switch() -> None:
+    f1, f2 = frames(0, 5), frames(5.2, 12)
+    parts = [
+        track(1, f1, 140, 48, cls="suitcase", w_px=6, h_px=6),
+        track(2, f2, 140.2, 48, cls="suitcase", w_px=6, h_px=6),  # re-detected under a new id
+    ]
+    segs = road_obstacle.detect(kin(*parts), SCENE, ctx(12), cfg("road_obstacle"))
+    assert len(segs) == 1 and near(segs[0], 0.0, 12.0, tol=0.3), segs
 
 
 def test_carried_bags_brief_or_off_road_objects_are_not_obstacles() -> None:
@@ -122,3 +164,28 @@ def test_carried_bags_brief_or_off_road_objects_are_not_obstacles() -> None:
         road_obstacle.detect(kin(walker, backpack, pavement_dog, blip), SCENE, ctx(8), cfg("road_obstacle"))
         == []
     )
+
+
+def leaving_through_the_bottom(t_end: float = 6.0):
+    """A car driving down the image at 10 m/s (off the lanes) and out through the bottom edge (y = 100 m).
+
+    The detector clips boxes to the frame, so once the car reaches the edge its footprint (box bottom)
+    freezes at the border while the car is still moving: the only thing that looks like a stop. Near
+    the camera a box includes the roof, so it stays clipped for about a second (here 10 m of box at
+    10 m/s); from 0.6 s on, the unfixed kinematics reported a single-vehicle crash here.
+    """
+    f = frames(0, t_end)
+    t = f / FPS
+    y = 50 + 10 * t  # metres; the bottom edge (1000 px) is reached at t = 5
+    rows = track(1, f, 250, y, w_px=40, h_px=100)
+    rows["y2"] = np.minimum(rows["y2"], 1000.0)
+    rows["fy"] = rows["y2"]
+    return rows[rows["y1"] < 1000.0].reset_index(drop=True)  # gone once the whole box is out
+
+
+def test_leaving_through_the_frame_edge_is_not_a_crash() -> None:
+    scene = Scene({**SCENE.layers, "image_size": [3000, 1000]})
+    tt = add_kinematics(leaving_through_the_bottom().astype(TRACK_DTYPES), scene)
+    assert tt.loc[tt["y2"] >= 999.0, "at_edge"].all()
+    assert not tt.loc[tt["at_edge"], "kin_valid"].any()
+    assert accident.detect(tt, scene, ctx(6), cfg("accident")) == []

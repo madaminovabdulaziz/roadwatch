@@ -4,7 +4,8 @@ Contract:
 - `add_kinematics(tt, scene, mode)` returns the TrackTable sorted by (t, track_id) with footprints
   mapped to metres (`X, Y`) and `vx, vy, speed, accel, heading_deg, yaw_rate, kin_valid`, the zone
   columns `lane_id, on_road, on_sidewalk, in_crosswalk, crosswalk_id, in_intersection, in_no_uturn,
-  in_parking`, the front point `front_x, front_y` (SPEC §12.4) and `obj_id`.
+  in_parking`, the vehicle's ground extent (`front_x, front_y`, `rear_x, rear_y` in image px, the box
+  centre `cX, cY` in metres, `veh_len, veh_wid`; SPEC §12.35) and `obj_id`.
   mode="offline" smooths with Savitzky-Golay (Part A); mode="online" uses causal EMA (Part B), so
   every row depends only on earlier rows of its track.
   `accel` is signed along the heading (braking < 0). Below `heading_min_speed_mps` the heading is
@@ -27,7 +28,20 @@ from scipy.signal import savgol_filter
 from roadwatch.config import load_thresholds
 from roadwatch.scene.scene import Scene
 
-PAIR_COLUMNS = ("track_a", "track_b", "cls_a", "cls_b", "dist", "closing_speed", "ttc")
+_DOWN_PROBE_PX = 20.0  # image step used to measure directions on the road plane
+
+PAIR_COLUMNS = (
+    "track_a",
+    "track_b",
+    "cls_a",
+    "cls_b",
+    "dist",
+    "closing_speed",
+    "ttc",
+    "ttc_cv",
+    "t_cpa",
+    "d_cpa",
+)
 
 
 def add_kinematics(
@@ -41,20 +55,37 @@ def add_kinematics(
     foot = out[["fx", "fy"]].to_numpy(dtype=np.float64)
 
     _add_zone_columns(out, scene, foot)
-    _add_front_point(out, scene, foot)
 
     metric = scene.has("homography") and len(out) > 0
     xy = scene.to_world(foot) if metric else np.full((len(out), 2), np.nan)
     out["X"], out["Y"] = xy[:, 0], xy[:, 1]
+    out["at_edge"] = _at_edge(out, scene, cfg)
     for col, values in _track_kinematics(out, xy, mode, cfg).items():
         out[col] = values
+    _add_vehicle_extent(out, scene, foot, cfg)
     out["obj_id"] = _persistence_ids(out, cfg)
 
     return out.sort_values(["t", "track_id"], kind="stable").reset_index(drop=True)
 
 
 def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
-    """Converging pairs among one frame's rows (needs `X, Y, vx, vy`), sorted by TTC."""
+    """Pairs on a collision course among one frame's rows, sorted by time to collision (SPEC §12.39).
+
+    Needs `X, Y, vx, vy` (metres, m/s); uses acceleration from `ax, ay`, or from `accel` along
+    `heading_deg`, when present (else none). A pair is kept only if all of these hold:
+    - it is within `max_pair_dist_m` and closing faster than `min_closing_speed_mps`;
+    - its paths really meet: the closest point of approach at constant relative velocity (`t_cpa` from
+      now, `d_cpa` apart) is under the collision radius, `conflict_radius_m` (vehicles) or
+      `conflict_radius_person_m` (a pedestrian involved). A car turning past someone 3 m outside its
+      path, or overtaking in the next lane, closes fast but is no conflict;
+    Two times to collision are returned:
+    - `ttc_cv` = d / c, at constant velocity: how imminent the collision would be without any reaction
+      (near_miss asks this at the moment the evasive action starts);
+    - `ttc`, braking-aware: the time for the distance to reach zero with the current relative
+      acceleration along the line between them, the smallest positive t with c t + a t^2 / 2 = d,
+      computed as 2d / (c + sqrt(c^2 + 2 a d)); inf when braking stops the approach short. A planned
+      stop behind a queue never predicts contact (Part B's risk uses this one).
+    """
     cfg = load_thresholds()["risk"]
     cols = ["X", "Y", "vx", "vy"]
     rows = frame_rows[np.isfinite(frame_rows[cols].to_numpy(dtype=np.float64)).all(axis=1)]
@@ -63,17 +94,25 @@ def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
 
     pos = rows[["X", "Y"]].to_numpy(dtype=np.float64)
     vel = rows[["vx", "vy"]].to_numpy(dtype=np.float64)
+    acc = _acceleration_vectors(rows)
     i, j = np.triu_indices(len(rows), k=1)
-    rel_pos = pos[j] - pos[i]
+    rel_pos, rel_vel, rel_acc = pos[j] - pos[i], vel[j] - vel[i], acc[j] - acc[i]
     dist = np.hypot(rel_pos[:, 0], rel_pos[:, 1])
-    rel_vel = vel[j] - vel[i]
+    speed2 = (rel_vel**2).sum(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
         closing = np.where(dist > 0, -(rel_pos * rel_vel).sum(axis=1) / dist, 0.0)
-        ttc = dist / closing
-    keep = (dist < cfg["max_pair_dist_m"]) & (closing > cfg["min_closing_speed_mps"])
+        closing_acc = np.where(dist > 0, -(rel_pos * rel_acc).sum(axis=1) / dist, 0.0)
+        t_cpa = np.where(speed2 > 0, np.maximum(0.0, -(rel_pos * rel_vel).sum(axis=1) / speed2), 0.0)
+        disc = closing**2 + 2 * closing_acc * dist
+        ttc = np.where(disc >= 0, 2 * dist / (closing + np.sqrt(np.maximum(disc, 0.0))), np.inf)
+        ttc_cv = dist / closing
+    d_cpa = np.hypot(*(rel_pos + rel_vel * t_cpa[:, None]).T)
 
     track = rows["track_id"].to_numpy()
     cls = rows["cls"].astype(str).to_numpy()
+    person = np.isin(cls, cfg["person_classes"])
+    radius = np.where(person[i] | person[j], cfg["conflict_radius_person_m"], cfg["conflict_radius_m"])
+    keep = (dist < cfg["max_pair_dist_m"]) & (closing > cfg["min_closing_speed_mps"]) & (d_cpa < radius)
     pairs = pd.DataFrame(
         {
             "track_a": track[i][keep],
@@ -83,31 +122,123 @@ def pair_features(frame_rows: pd.DataFrame) -> pd.DataFrame:
             "dist": dist[keep],
             "closing_speed": closing[keep],
             "ttc": ttc[keep],
+            "ttc_cv": ttc_cv[keep],
+            "t_cpa": t_cpa[keep],
+            "d_cpa": d_cpa[keep],
         }
     )
     return pairs.sort_values(["ttc", "track_a", "track_b"], kind="stable").reset_index(drop=True)
 
 
+def _acceleration_vectors(rows: pd.DataFrame) -> np.ndarray:
+    """(N, 2) acceleration in metres/s^2: `ax, ay` if given, else `accel` along the heading, else 0."""
+    if {"ax", "ay"} <= set(rows.columns):
+        acc = rows[["ax", "ay"]].to_numpy(dtype=np.float64)
+    elif {"accel", "heading_deg"} <= set(rows.columns):
+        rad = np.radians(rows["heading_deg"].to_numpy(dtype=np.float64))
+        along = rows["accel"].to_numpy(dtype=np.float64)
+        acc = along[:, None] * np.stack([np.cos(rad), np.sin(rad)], axis=1)
+    else:
+        acc = np.zeros((len(rows), 2))
+    return np.nan_to_num(acc, nan=0.0)
+
+
 def _add_zone_columns(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None:
     out["lane_id"] = scene.lane_of(foot).astype(str)
     out["on_road"] = scene.point_in("carriageway", foot)
-    out["on_sidewalk"] = scene.point_in("sidewalks", foot)
+    # traffic islands (refuges, the median) are pavement for pedestrians (SPEC §12.6, §12.42)
+    out["on_sidewalk"] = scene.point_in("sidewalks", foot) | scene.point_in("islands", foot)
     out["crosswalk_id"] = scene.region_of("crosswalks", foot).astype(str)
     out["in_crosswalk"] = out["crosswalk_id"] != ""
     out["in_intersection"] = scene.point_in("intersection", foot)
     out["in_no_uturn"] = scene.point_in("no_u_turn_zones", foot)
     out["in_parking"] = scene.point_in("parking_zones", foot)
+    out["in_bus_stop"] = scene.point_in("bus_stops", foot)
 
 
-def _add_front_point(out: pd.DataFrame, scene: Scene, foot: np.ndarray) -> None:
-    """Footprint shifted by half the box height along the lane direction (SPEC §12.4)."""
-    shift = np.zeros_like(foot)
-    half_h = (out["y2"].to_numpy(dtype=np.float64) - out["y1"].to_numpy(dtype=np.float64)) / 2
-    lanes = out["lane_id"].to_numpy()
-    for lane_id, direction in scene.lane_directions().items():
-        in_lane = lanes == lane_id
-        shift[in_lane] = direction * half_h[in_lane, None]
-    out["front_x"], out["front_y"] = foot[:, 0] + shift[:, 0], foot[:, 1] + shift[:, 1]
+def _add_vehicle_extent(out: pd.DataFrame, scene: Scene, foot: np.ndarray, cfg: dict[str, Any]) -> None:
+    """Front and rear bumper points of every vehicle row from a ground-plane box model (SPEC §12.35).
+
+    A vehicle is a `length x width` rectangle on the road, oriented by its heading (world frame; held
+    while slow; the lane direction before it first moves). The box's bottom-centre (the footprint) is
+    the point of that rectangle nearest the camera, so the rectangle's centre lies behind the footprint,
+    away from the camera, by the rectangle's half-extent along the camera direction `u` (the road-plane
+    direction of "down the image" at the footprint):
+        centre = footprint - (L/2 |h.u| + W/2 |n.u|) u,   front = centre + L/2 h,   rear = centre - L/2 h.
+    A car driving toward the camera then has its front at the footprint, one driving away its rear.
+    Persons, rows without a heading or lane direction, and scenes without a homography fall back to the
+    footprint for both points.
+    """
+    n = len(out)
+    front, rear = foot.copy(), foot.copy()
+    centre = np.full((n, 2), np.nan)
+    dims = cfg["vehicle_dims_m"]
+    cls = out["cls"].astype(str).to_numpy()
+    length = np.array([dims.get(c, (0.0, 0.0))[0] for c in cls], dtype=np.float64)
+    width = np.array([dims.get(c, (0.0, 0.0))[1] for c in cls], dtype=np.float64)
+    if n and scene.has("homography"):
+        rad = np.radians(out["heading_deg"].to_numpy(dtype=np.float64))
+        h = np.stack([np.cos(rad), np.sin(rad)], axis=1)
+        missing = ~np.isfinite(h).all(axis=1)
+        if missing.any():
+            h[missing] = _lane_world_dirs(out["lane_id"].to_numpy()[missing], foot[missing], scene)
+        ok = (length > 0) & np.isfinite(h).all(axis=1)
+        if ok.any():
+            w0 = scene.to_world(foot[ok])
+            u = scene.to_world(foot[ok] + np.array([0.0, _DOWN_PROBE_PX])) - w0
+            u /= np.linalg.norm(u, axis=1, keepdims=True)
+            hk = h[ok]
+            nk = np.stack([-hk[:, 1], hk[:, 0]], axis=1)
+            half_l, half_w = length[ok] / 2, width[ok] / 2
+            depth = half_l * np.abs((hk * u).sum(axis=1)) + half_w * np.abs((nk * u).sum(axis=1))
+            c = w0 - depth[:, None] * u
+            centre[ok] = c
+            front[ok] = scene.to_image(c + half_l[:, None] * hk)
+            rear[ok] = scene.to_image(c - half_l[:, None] * hk)
+    out["front_x"], out["front_y"] = front[:, 0], front[:, 1]
+    out["rear_x"], out["rear_y"] = rear[:, 0], rear[:, 1]
+    out["cX"], out["cY"] = centre[:, 0], centre[:, 1]
+    out["veh_len"], out["veh_wid"] = length, width
+
+
+def _lane_world_dirs(lanes: np.ndarray, foot: np.ndarray, scene: Scene) -> np.ndarray:
+    """Unit lane direction on the road plane at each footprint (NaN outside lanes with a direction)."""
+    out = np.full((len(lanes), 2), np.nan)
+    for lane_id, d_img in scene.lane_directions().items():
+        rows = lanes == lane_id
+        if rows.any():
+            d = scene.to_world(foot[rows] + d_img * _DOWN_PROBE_PX) - scene.to_world(foot[rows])
+            out[rows] = d / np.linalg.norm(d, axis=1, keepdims=True)
+    return out
+
+
+def vehicle_corners(rows: pd.DataFrame, scene: Scene) -> np.ndarray:
+    """(N, 4, 2) image points of each row's ground rectangle: front-left, front-right, rear-right, rear-left.
+
+    Rows without a vehicle model (persons, no heading) get their footprint four times.
+    """
+    n = len(rows)
+    foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
+    out = np.repeat(foot[:, None, :], 4, axis=1)
+    centre = rows[["cX", "cY"]].to_numpy(dtype=np.float64)
+    ok = np.isfinite(centre).all(axis=1) & (rows["veh_len"].to_numpy() > 0)
+    if not n or not ok.any():
+        return out
+    front = rows[["front_x", "front_y"]].to_numpy(dtype=np.float64)[ok]
+    h = scene.to_world(front) - centre[ok]
+    h /= np.linalg.norm(h, axis=1, keepdims=True)
+    nvec = np.stack([-h[:, 1], h[:, 0]], axis=1)
+    half_l = rows["veh_len"].to_numpy(dtype=np.float64)[ok, None] / 2
+    half_w = rows["veh_wid"].to_numpy(dtype=np.float64)[ok, None] / 2
+    c = centre[ok]
+    world = [
+        c + half_l * h + half_w * nvec,
+        c + half_l * h - half_w * nvec,
+        c - half_l * h - half_w * nvec,
+        c - half_l * h + half_w * nvec,
+    ]
+    out[ok] = np.stack([scene.to_image(w) for w in world], axis=1)
+    return out
 
 
 def _track_bounds(track_ids: np.ndarray) -> list[tuple[int, int]]:
@@ -118,11 +249,33 @@ def _track_bounds(track_ids: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(np.r_[0, cuts].tolist(), np.r_[cuts, len(track_ids)].tolist(), strict=True))
 
 
+def _at_edge(out: pd.DataFrame, scene: Scene, cfg: dict[str, Any]) -> np.ndarray:
+    """Rows whose box touches the frame border (within edge_margin_frac of the frame size).
+
+    The detector clips boxes to the frame, so an object half out of view has a footprint that no longer
+    follows it: a car leaving through the bottom edge seems to stop dead. Without the frame size (no
+    `image_size` in the scene) nothing is flagged.
+    """
+    size = scene.layers.get("image_size")
+    if not size or out.empty:
+        return np.zeros(len(out), dtype=bool)
+    width, height = float(size[0]), float(size[1])
+    mx, my = cfg["edge_margin_frac"] * width, cfg["edge_margin_frac"] * height
+    return (
+        (out["x1"].to_numpy(dtype=np.float64) <= mx)
+        | (out["y1"].to_numpy(dtype=np.float64) <= my)
+        | (out["x2"].to_numpy(dtype=np.float64) >= width - mx)
+        | (out["y2"].to_numpy(dtype=np.float64) >= height - my)
+    )
+
+
 def _track_kinematics(
     out: pd.DataFrame, xy: np.ndarray, mode: str, cfg: dict[str, Any]
 ) -> dict[str, np.ndarray]:
+    """Per track, from its rows away from the frame edge only (edge rows keep NaN and kin_valid=False)."""
     n = len(out)
     t = out["t"].to_numpy(dtype=np.float64)
+    edge = out["at_edge"].to_numpy(dtype=bool)
     res = {c: np.full(n, np.nan) for c in ("vx", "vy", "speed", "accel", "heading_deg", "yaw_rate")}
     res["kin_valid"] = np.zeros(n, dtype=bool)
     if not np.isfinite(xy).all():
@@ -130,14 +283,18 @@ def _track_kinematics(
 
     smooth = _savgol_track if mode == "offline" else _ema_track
     for s, e in _track_bounds(out["track_id"].to_numpy()):
-        vel, acc = smooth(t[s:e], xy[s:e], cfg)
+        rows = np.arange(s, e)[~edge[s:e]]
+        if len(rows) < 2:
+            continue
+        tt, pos = t[rows], xy[rows]
+        vel, acc = smooth(tt, pos, cfg)
         speed = np.hypot(vel[:, 0], vel[:, 1])
-        heading, yaw_rate = _heading(t[s:e], vel, speed, cfg["heading_min_speed_mps"], mode)
+        heading, yaw_rate = _heading(tt, vel, speed, cfg["heading_min_speed_mps"], mode)
         unit = np.stack([np.cos(np.radians(heading)), np.sin(np.radians(heading))], axis=1)
-        res["vx"][s:e], res["vy"][s:e], res["speed"][s:e] = vel[:, 0], vel[:, 1], speed
-        res["accel"][s:e] = (acc * unit).sum(axis=1)  # NaN until the first moving sample
-        res["heading_deg"][s:e], res["yaw_rate"][s:e] = heading, yaw_rate
-        res["kin_valid"][s:e] = t[e - 1] - t[s] >= cfg["min_track_sec"]
+        res["vx"][rows], res["vy"][rows], res["speed"][rows] = vel[:, 0], vel[:, 1], speed
+        res["accel"][rows] = (acc * unit).sum(axis=1)  # NaN until the first moving sample
+        res["heading_deg"][rows], res["yaw_rate"][rows] = heading, yaw_rate
+        res["kin_valid"][rows] = tt[-1] - tt[0] >= cfg["min_track_sec"]
     return res
 
 

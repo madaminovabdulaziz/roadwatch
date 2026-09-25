@@ -51,10 +51,10 @@ def test_single_frame_glitch_is_filtered() -> None:
     assert [s for _, _, s in segs] == ["red", "green", "yellow", "red"]
 
 
-def test_online_is_unknown_until_calibrated_then_correct() -> None:
+def test_online_knows_the_state_from_the_first_frame_then_stays_correct() -> None:
     est = SignalStateEstimator(SCENE)
     states = [(t, est.update(img, t)["L1"]) for _, t, img in frames(30.0)]
-    assert states[0][1] == UNKNOWN  # nothing seen yet: no lamp has shown on and off
+    assert states[0][1] == "red"  # the colour-excess test needs no history (SPEC §12.36)
     second_cycle = [(t, s) for t, s in states if t >= 15.0]
     near_change = lambda t: min(abs((t % 15.0) - c[0]) for c in CYCLE) < 0.6  # noqa: E731
     wrong = [(t, s) for t, s in second_cycle if not near_change(t) and s != lit_at(t)]
@@ -132,6 +132,44 @@ def test_flow_fallback_green_when_crossing_red_when_waiting() -> None:
         [_track(1, t, 25 + 5 * t, 0 * t + 32), _track(2, t, 0 * t + 72, 0 * t + 55)], ignore_index=True
     ).astype(TRACK_DTYPES)
     timeline = flow_timeline(add_kinematics(tt, scene), scene)
-    assert state_at(timeline["A"], 5.0) == "green"
-    assert state_at(timeline["B"], 5.0) == "red"
+    # A's front bumper (2.3 m ahead of the footprint, SPEC §12.35) crosses x = 50 m at t = 4.54 s
+    assert state_at(timeline["A"], 4.6) == "green"
+    assert state_at(timeline["B"], 4.6) == "red"
     assert state_at(timeline["A"], 1.0) == UNKNOWN
+
+
+def test_a_whole_clip_in_one_state_is_still_read() -> None:
+    """Percentile normalisation alone read a clip that stays red as unknown (no lamp ever changes)."""
+    red_only = ((i, i / FPS, frame("red")) for i in range(int(20 * FPS)))
+    segs = SignalStateEstimator(SCENE).timeline(red_only)["L1"]
+    assert [s for _, _, s in segs] == ["red"]
+
+
+def test_a_red_object_in_front_of_the_head_is_not_a_red_light() -> None:
+    """A red bus covering all three lamp boxes shows red in every box: no colour excess, not red."""
+
+    def occluded(i: int) -> np.ndarray:
+        img = frame("green")
+        t = i / FPS
+        if 6.0 <= t < 7.5:
+            img[5:50, 5:25] = LIT_BGR["red"]  # covers every lamp box (half-size frame)
+        return img
+
+    segs = SignalStateEstimator(SCENE).timeline((i, i / FPS, occluded(i)) for i in range(int(12 * FPS)))["L1"]
+    assert "red" not in {s for _, _, s in segs}
+
+
+def test_yellow_is_recognised_although_it_is_rarely_lit() -> None:
+    """Yellow is lit ~5 % of the time, so its 95th percentile never saw it on; the absolute test does."""
+    cycle = [("red", 30.0), ("green", 25.0), ("yellow", 3.0), ("red", 10.0)]
+
+    def gen():
+        i, t = 0, 0.0
+        for lamp, dur in cycle:
+            for _ in range(int(dur * FPS)):
+                yield i, t, frame(lamp)
+                i, t = i + 1, t + 1 / FPS
+
+    segs = SignalStateEstimator(SCENE).timeline(gen())["L1"]
+    yellow = [(a, b) for a, b, s in segs if s == "yellow"]
+    assert len(yellow) == 1 and abs(yellow[0][0] - 55.0) <= 0.3 and abs(yellow[0][1] - 58.0) <= 0.3

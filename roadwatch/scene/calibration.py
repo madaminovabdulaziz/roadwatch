@@ -29,7 +29,9 @@ from roadwatch.video import probe, read_window
 LAYERS: dict[str, dict[str, Any]] = {
     "carriageway": {"kind": "polygon", "multi": False, "fields": []},
     "sidewalks": {"kind": "polygon", "multi": True, "fields": []},
+    "islands": {"kind": "polygon", "multi": True, "fields": []},  # refuges and the median: pavement
     "parking_zones": {"kind": "polygon", "multi": True, "fields": []},
+    "bus_stops": {"kind": "polygon", "multi": True, "fields": []},  # buses dwelling here are not stopped
     "intersection": {"kind": "polygon", "multi": False, "fields": []},
     "lanes": {
         "kind": "polygon",
@@ -46,6 +48,8 @@ LAYERS: dict[str, dict[str, Any]] = {
     "homography": {"kind": "point", "multi": True, "fields": ["world_x", "world_y"]},
 }
 LAMPS = ("red", "yellow", "green")
+# layers stored as a plain list of polygons in scene.json (SPEC §4, §12.42)
+POLYGON_LIST_LAYERS = ("sidewalks", "islands", "parking_zones", "bus_stops", "no_u_turn_zones")
 _COLLINEAR_REL_AREA = 1e-3  # triangle area / squared extent below this counts as three points on a line
 _ARROW_PX = 200.0  # length of the arrow drawn for an existing lane direction when re-editing
 
@@ -103,7 +107,7 @@ def shapes_to_scene(
     for layer in ("carriageway", "intersection"):
         if by_layer[layer]:
             scene[layer] = by_layer[layer][-1]["pts"]
-    for layer in ("sidewalks", "parking_zones", "no_u_turn_zones"):
+    for layer in POLYGON_LIST_LAYERS:
         if by_layer[layer]:
             scene[layer] = [s["pts"] for s in by_layer[layer]]
 
@@ -176,7 +180,7 @@ def scene_to_shapes(scene: dict[str, Any]) -> list[dict[str, Any]]:
     for layer in ("carriageway", "intersection"):
         if scene.get(layer):
             add(layer, scene[layer])
-    for layer in ("sidewalks", "parking_zones", "no_u_turn_zones"):
+    for layer in POLYGON_LIST_LAYERS:
         for poly in scene.get(layer) or []:
             add(layer, poly)
 

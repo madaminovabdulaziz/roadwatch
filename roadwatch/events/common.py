@@ -2,8 +2,11 @@
 
 Rules receive the TrackTable after `features.add_kinematics` (one row per track per processed frame).
 - `in_group(tt, *groups)`: rows whose class belongs to tracker groups from thresholds.yaml.
-- `max_gap(ctx)`: the largest time step that still counts as continuous (1.5 processed-frame steps),
-  so a single lost detection does not split a run.
+- `max_gap(ctx)`: the largest hole in a track that still counts as continuous: `events.max_gap_sec`
+  (about ByteTrack's lost-track buffer), or 2.5 sample steps if that is longer. Missed detections leave
+  no row, and the pacer thins frames on slow machines; neither may split a run (SPEC §12.37).
+- `midpoint_gap(ctx)`: the largest step between two samples whose midpoint may time a boundary
+  (1.5 sample steps); longer holes time it at the sample itself.
 - `runs(t, mask, gap)`: (first, last) index pairs of consecutive True samples, split where the mask is
   False or the time step exceeds `gap`.
 - `by_track(tt, key)`: (id, rows sorted by t) per track (or per `obj_id` for persistence-merged objects).
@@ -14,7 +17,13 @@ Rules receive the TrackTable after `features.add_kinematics` (one row per track 
 - `crossings(t, pts, line, gap)`: steps of one track crossing a line, with interpolated times.
 - `past_line_m(scene, line, pts, lane_dir)`: signed metres beyond a line in the lane direction.
 - `dist_to_polygon_m(scene, polygon, pts)`: metres to a polygon's boundary (0 inside).
+- `depth_in_polygon_m(scene, polygon, pts)`: metres from inside points to the boundary (0 outside).
 - `stable_from(t, heading, start, tol, hold)`: first index whose heading then holds within `tol`.
+- `midpoint_before(t, i, gap)` / `midpoint_after(t, mask, i, gap)`: event boundaries at a sample
+  transition are timed at the midpoint of the two samples (unbiased at ~10 Hz); across a gap longer than
+  `gap`, or at a track's end, the sample itself is used.
+- `along_vehicle(rows, n)`: `n` image points from each row's front bumper to its rear bumper, for
+  "does the vehicle overlap this polygon" tests.
 """
 
 from __future__ import annotations
@@ -42,6 +51,10 @@ def in_group(tt: pd.DataFrame, *groups: str) -> np.ndarray:
 
 
 def max_gap(ctx: VideoContext) -> float:
+    return max(load_thresholds()["events"]["max_gap_sec"], 2.5 * ctx.stride / ctx.meta.fps)
+
+
+def midpoint_gap(ctx: VideoContext) -> float:
     return 1.5 * ctx.stride / ctx.meta.fps
 
 
@@ -134,17 +147,28 @@ def past_line_m(scene: Scene, line: np.ndarray, pts_img: np.ndarray, lane_dir_im
     return (scene.to_world(pts_img) - a) @ n
 
 
-def dist_to_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
-    """Distance in metres from image points to a polygon's boundary (0 inside), on the road plane."""
+def _edge_dist_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(distance in metres on the road plane to the polygon's boundary, inside mask) per image point."""
     poly = scene.to_world(np.asarray(polygon_img, dtype=np.float64))
-    p = scene.to_world(pts_img)
+    p = scene.to_world(np.asarray(pts_img, dtype=np.float64).reshape(-1, 2))
     best = np.full(len(p), np.inf)
     for a, b in zip(poly, np.roll(poly, -1, axis=0), strict=True):
         ab = b - a
         u = np.clip(((p - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0, 1.0)
         best = np.minimum(best, np.linalg.norm(p - (a + u[:, None] * ab), axis=1))
-    best[points_in_polygon(p, poly)] = 0.0
-    return best
+    return best, points_in_polygon(p, poly)
+
+
+def dist_to_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
+    """Distance in metres from image points to a polygon's boundary (0 inside), on the road plane."""
+    dist, inside = _edge_dist_m(scene, polygon_img, pts_img)
+    return np.where(inside, 0.0, dist)
+
+
+def depth_in_polygon_m(scene: Scene, polygon_img: np.ndarray, pts_img: np.ndarray) -> np.ndarray:
+    """How far inside a polygon each image point is, in metres on the road plane (0 outside)."""
+    dist, inside = _edge_dist_m(scene, polygon_img, pts_img)
+    return np.where(inside, dist, 0.0)
 
 
 def stable_from(t: np.ndarray, heading: np.ndarray, start: int, tol: float, hold: float) -> int | None:
@@ -159,3 +183,30 @@ def stable_from(t: np.ndarray, heading: np.ndarray, start: int, tol: float, hold
         if np.all(np.abs(diff[np.isfinite(diff)]) <= tol):
             return i
     return None
+
+
+def midpoint_before(t: np.ndarray, i: int, gap: float) -> float:
+    """Time a state starting at sample `i` began: midway from the previous sample if it is close."""
+    if i > 0 and t[i] - t[i - 1] <= gap:
+        return float((t[i - 1] + t[i]) / 2)
+    return float(t[i])
+
+
+def midpoint_after(t: np.ndarray, mask: np.ndarray, i: int, gap: float) -> float:
+    """Time the state `mask` (True from sample `i`) ended: midway to the first False sample after it;
+    the last sample if it never ends in this track (the object left the frame) or across a gap."""
+    off = np.flatnonzero(~mask[i:])
+    if not len(off):
+        return float(t[-1])
+    j = i + int(off[0])
+    if j > 0 and t[j] - t[j - 1] <= gap:
+        return float((t[j - 1] + t[j]) / 2)
+    return float(t[j - 1] if j > 0 else t[j])
+
+
+def along_vehicle(rows: pd.DataFrame, n: int = 5) -> np.ndarray:
+    """(N, n, 2) image points evenly spaced from each row's front bumper to its rear bumper."""
+    front = rows[["front_x", "front_y"]].to_numpy(dtype=np.float64)
+    rear = rows[["rear_x", "rear_y"]].to_numpy(dtype=np.float64)
+    w = np.linspace(0.0, 1.0, n)[None, :, None]
+    return front[:, None, :] * (1 - w) + rear[:, None, :] * w

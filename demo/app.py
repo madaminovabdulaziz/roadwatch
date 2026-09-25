@@ -6,7 +6,9 @@
     GET  /api/health
 
 Bad input gets a 4xx JSON `{"message": ...}` the website shows as is; nothing a user uploads can cause a
-500. Run from the repository root with the CPU profile (demo/Dockerfile sets the same variable):
+500. Any length is accepted up to `max_upload_mb` (raw camera files are ~1 GB a minute); only the first
+`max_process_sec` seconds are analysed. A declared body over the limit is refused before it is read.
+Run from the repository root with the CPU profile (demo/Dockerfile sets the same variable):
 
     ROADWATCH_OVERRIDES=demo/config.yaml uvicorn demo.app:app --host 0.0.0.0 --port 7860
 """
@@ -17,7 +19,8 @@ import tempfile
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -26,13 +29,18 @@ from demo.process import BadInput, demo_cfg, probe_upload
 from demo.process import process as run_process
 
 CHUNK = 1 << 20
+FORM_OVERHEAD = 1 << 20  # multipart boundaries and headers around the file
 
 
 def create_app(processor=run_process, root: Path | None = None) -> FastAPI:
     """The app with its own job queue; tests pass a fake `processor` and a temporary `root`."""
     cfg = demo_cfg()
     jobs = JobQueue(
-        root or Path(tempfile.gettempdir()) / "roadwatch-demo", processor, cfg["max_queue"], cfg["expiry_sec"]
+        root or Path(tempfile.gettempdir()) / "roadwatch-demo",
+        processor,
+        cfg["max_queue"],
+        cfg["expiry_sec"],
+        cfg["max_job_sec"],
     )
     app = FastAPI(title="RoadWatch demo", docs_url=None, redoc_url=None)
     # A public, read-only demo: the static website on another origin calls it from the browser.
@@ -42,6 +50,18 @@ def create_app(processor=run_process, root: Path | None = None) -> FastAPI:
 
     def reject(status: int, message: str) -> JSONResponse:
         return JSONResponse({"message": message}, status_code=status)
+
+    def too_large() -> JSONResponse:
+        return reject(413, f"the file is larger than {cfg['max_upload_mb']} MB")
+
+    @app.middleware("http")
+    async def refuse_oversized_uploads(request: Request, call_next):
+        # the multipart form is read in full before the endpoint runs: refuse on the declared size
+        declared = request.headers.get("content-length", "")
+        limit = cfg["max_upload_mb"] * 1024 * 1024 + FORM_OVERHEAD
+        if request.method == "POST" and declared.isdigit() and int(declared) > limit:
+            return too_large()
+        return await call_next(request)
 
     @app.post("/api/jobs")
     async def create_job(file: Annotated[UploadFile, File()]) -> JSONResponse:
@@ -58,18 +78,13 @@ def create_app(processor=run_process, root: Path | None = None) -> FastAPI:
                 size += len(chunk)
                 if size > limit:
                     jobs.discard(job)
-                    return reject(413, f"the file is larger than {cfg['max_upload_mb']} MB")
+                    return too_large()
                 f.write(chunk)
         try:
-            duration = probe_upload(job.workdir / "input.mp4")
+            await run_in_threadpool(probe_upload, job.workdir / "input.mp4")
         except BadInput as exc:
             jobs.discard(job)
             return reject(400, str(exc))
-        if duration > cfg["max_duration_sec"]:
-            jobs.discard(job)
-            return reject(
-                400, f"the video is {round(duration)} s long; the limit is {cfg['max_duration_sec']} s"
-            )
         jobs.submit(job)
         return JSONResponse({"job_id": job.id})
 
@@ -78,7 +93,7 @@ def create_app(processor=run_process, root: Path | None = None) -> FastAPI:
         job = jobs.get(job_id)
         if job is None:
             return JSONResponse({"status": "error", "message": "unknown or expired job"}, status_code=404)
-        return JSONResponse(job.public())
+        return JSONResponse(jobs.public(job))
 
     @app.get("/api/files/{job_id}/annotated.mp4", response_model=None)
     def job_video(job_id: str) -> FileResponse | JSONResponse:

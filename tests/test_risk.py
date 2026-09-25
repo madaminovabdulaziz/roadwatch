@@ -81,16 +81,28 @@ def test_features() -> None:
     assert ped["ped_ttc"] == pytest.approx(2.0) and math.isinf(ped["ttc_min"])
     wrong = risk_features(rows((1, "car", 50, 45, -8, 0, 0, 0)), SCENE, set(), c)
     assert wrong["wrong_way"] == 1.0 and wrong["red_light"] == 0.0
-    red = risk_features(rows((1, "car", 50, 45, 8, 0, -7, 0)), SCENE, {"e1"}, c)
-    assert red["red_light"] == 1.0 and red["decel_max"] == pytest.approx(7.0)
+    hard = risk_features(rows((1, "car", 50, 45, 8, 0, -7, 0)), SCENE, {"e1"}, c)
+    assert hard["decel_max"] == pytest.approx(7.0 - c["decel_floor_mps2"])  # braking above everyday
+    assert hard["red_light"] == 0.0  # in its lane (no intersection here): approaching a red is legal
+    mild = risk_features(rows((1, "car", 50, 45, 8, 0, -3, 0)), SCENE, set(), c)
+    assert mild["decel_max"] == 0.0
     assert risk_features(pd.DataFrame(), SCENE, set(), c) == CALM
 
 
-def test_online_kinematics_converge_and_are_causal() -> None:
-    kin = OnlineKinematics(0.5)
+def test_online_kinematics_converge_and_average_out_jitter() -> None:
+    kin = OnlineKinematics(cfg())
     ids = np.array([7])
     outs = [kin.update(i / 10, ids, np.array([[2.0 * i / 10, 0.0]]))[0][0, 0] for i in range(40)]
-    assert abs(outs[-1] - 2.0) < 0.01 and outs[0] == 0.0
+    assert math.isnan(outs[0])  # no velocity until the fit has enough samples
+    assert abs(outs[-1] - 2.0) < 1e-9  # a line fit is exact on uniform motion
+
+    # a parked car whose footprint jitters by 0.3 m: the fitted speed stays well under walking pace
+    rng = np.random.default_rng(0)
+    parked = OnlineKinematics(cfg())
+    speeds = [
+        np.hypot(*parked.update(i / 10, ids, rng.normal(0, 0.3, size=(1, 2)))[0][0]) for i in range(300)
+    ]
+    assert np.nanpercentile(speeds, 95) < 1.5
 
 
 class FakeDetector:
@@ -209,3 +221,132 @@ def test_pacing_skips_work_when_behind_schedule(monkeypatch: pytest.MonkeyPatch)
         assert 0.0 <= core.step(frame, i / FPS) <= 1.0
     # budget 0.6 x 10 s + 2 s = 8 s of step time at 0.5 s each -> about 16 slots, the rest skipped
     assert 10 <= len(calls) <= 20 and core.skipped >= 80
+
+
+def test_aligning_the_scene_mid_video_does_not_look_like_motion() -> None:
+    # Part B aligns the scene to the video from the frames it receives (SPEC §12.34). The moment it does,
+    # every footprint's position in metres jumps (here 1.5 m); stationary cars must not read as braking.
+    shift = np.array([[1.0, 0.0, 15.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # reference -> video: 15 px
+
+    class AlignAtOneSecond:
+        done = False
+
+        def offer(self, frame, t_sec):
+            if t_sec < 1.0:
+                return None
+            self.done = True
+            return NO_LANES.transformed(shift, (1000, 1000))
+
+    core = RiskCore(detector=FakeDetector(lambda t: [(30, 45, 2)]), scene=NO_LANES)
+    core.reset({"video_id": "v.mp4", "fps": FPS, "width": 1000, "height": 1000, "n_frames": 90})
+    core.registration = AlignAtOneSecond()
+    frame = np.zeros((1000, 1000, 3), np.uint8)
+    scores = [core.step(frame, i / FPS) for i in range(90)]
+    assert max(scores) < 0.05, max(scores)
+
+
+# ------------------------------------------------------------------ normal traffic must stay calm (§12.40)
+def jittered(positions, sigma_m: float):
+    """Boxes at `positions(t)` with deterministic Gaussian footprint jitter (detector noise)."""
+
+    def boxes(t: float):
+        rng = np.random.default_rng(int(round(t * FPS)))
+        return [(x + rng.normal(0, sigma_m), y + rng.normal(0, sigma_m), c) for x, y, c in positions(t)]
+
+    return boxes
+
+
+def test_a_stationary_queue_with_detector_jitter_raises_no_alarm() -> None:
+    # 15 cars waiting at a red light in 3 lanes, 6.5 m apart, footprints jittering by 0.3 m (about
+    # +-3 px far from the camera at 4K): nothing moves, so nothing may look like a collision course.
+    queue = [(20 + 6.5 * k, y, 2) for k in range(5) for y in (45.0, 48.5, 52.0)]
+    scores = run(jittered(lambda t: queue, 0.3), 30)
+    assert max(s for _, s in scores) < 0.2
+
+
+def test_a_normal_stop_behind_a_stopped_car_raises_no_alarm() -> None:
+    # 12 m/s, braking at 3 m/s^2 from 2 s on, stopping 2 m behind a car standing at x = 60 m.
+    def follower(t: float) -> float:
+        brake = min(max(t - 2.0, 0.0), 4.0)
+        return 10 + 12 * min(t, 2.0) + 12 * brake - 1.5 * brake**2
+
+    scores = run(jittered(lambda t: [(follower(t), 45, 2), (60, 45, 2)], 0.05), 8)
+    assert max(s for _, s in scores) < 0.5
+
+
+def test_leaving_through_the_frame_edge_is_not_braking() -> None:
+    # A car drives down the image at 10 m/s and out through the bottom edge (y = 100 m = 1000 px): its
+    # clipped box freezes the footprint, which must not read as a hard stop next to a waiting car.
+    def boxes(t: float):
+        y = 50 + 10 * t
+        return [(20, min(y, 100.0), 2), (30, 97.0, 2)]  # a waiting car 10 m to the side
+
+    scores = run(boxes, 6, scene=NO_LANES)
+    assert max(s for _, s in scores) < 0.1
+
+
+def test_red_light_feature_fires_past_the_line_not_in_the_queue() -> None:
+    # Lane e1 (signal L1, red) ends at the stop line x = 50 m; the intersection starts there.
+    scene = Scene(
+        {
+            **SCENE.layers,
+            "lanes": [{**SCENE.layers["lanes"][0], "polygon": [[0, 400], [500, 400], [500, 500], [0, 500]]}],
+            "intersection": [[500, 200], [1000, 200], [1000, 600], [500, 600]],
+        }
+    )
+    approaching = pd.DataFrame(
+        {
+            "track_id": [1],
+            "cls": ["car"],
+            "X": [40.0],
+            "Y": [45.0],
+            "vx": [8.0],
+            "vy": [0.0],
+            "ax": [0.0],
+            "ay": [0.0],
+            "fx": [400.0],
+            "fy": [450.0],
+            "last_lane": ["e1"],
+            "age": [3.0],
+        }
+    )
+    running = approaching.assign(X=55.0, fx=550.0)  # past the line, came from e1, still red
+    assert risk_features(approaching, scene, {"e1"}, cfg())["red_light"] == 0.0
+    assert risk_features(running, scene, {"e1"}, cfg())["red_light"] == 1.0
+    assert risk_features(running, scene, set(), cfg())["red_light"] == 0.0
+
+
+def test_part_b_paces_against_the_videos_real_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Part A marked this video's start 100 s ago: its 3x budget (27 s at 2.7x for 10 s) is gone, so
+    # once Part B has seen enough to project its finish it must stop processing (the harness still
+    # needs its own decoding time; over 3x the whole video, Part A included, scores empty).
+    import time as _time
+
+    from roadwatch import budget
+
+    monkeypatch.setitem(budget._STARTS, "v.mp4", _time.perf_counter() - 100.0)
+    core = RiskCore(detector=FakeDetector(lambda t: [(20 + 10 * t, 45, 2)]), scene=NO_LANES)
+    core.reset({"video_id": "v.mp4", "fps": FPS, "width": 1000, "height": 1000, "n_frames": int(10 * FPS)})
+    frame = np.zeros((1000, 1000, 3), np.uint8)
+    scores = [core.step(frame, i / FPS) for i in range(int(10 * FPS))]
+    pace_after = core.cfg["pace_after_sec"]
+    assert core.skipped >= int((10 - pace_after) * FPS / core.cfg["stride"]) - 1
+    assert all(0.0 <= s <= 1.0 for s in scores)
+
+
+def test_on_time_part_b_never_skips() -> None:
+    # Without a Part A start mark the deadline counts from reset; a fast machine never engages pacing,
+    # so normal runs stay deterministic.
+    core = RiskCore(detector=FakeDetector(lambda t: [(20 + 10 * t, 45, 2)]), scene=NO_LANES)
+    core.reset({"video_id": "fresh.mp4", "fps": FPS, "width": 1000, "height": 1000, "n_frames": int(8 * FPS)})
+    frame = np.zeros((1000, 1000, 3), np.uint8)
+    for i in range(int(8 * FPS)):
+        core.step(frame, i / FPS)
+    assert core.skipped == 0
+
+
+def test_a_scene_clicked_at_another_resolution_is_scaled_to_the_frames() -> None:
+    # the demo feeds 720p frames while configs/scene.json was clicked on the 4K reference frame
+    head_on = lambda t: [(20 + 10 * t, 45, 2), (80 - 10 * t, 45.5, 2)]  # noqa: E731
+    at_2x = NO_LANES.transformed(np.diag([2.0, 2.0, 1.0]), (2000, 2000))
+    assert run(head_on, 2.9, scene=at_2x) == run(head_on, 2.9)
