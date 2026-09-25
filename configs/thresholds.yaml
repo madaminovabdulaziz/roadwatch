@@ -291,7 +291,9 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       min_area_m2: 0.3
       box_expand: 0.2
       static_sec: 3.0
+      static_speed_mps: 0.5    # a bag slower than this lies still
       gone_sec: 2.0
+      ignore_classes: [bird]   # pigeons land and fly off: never an obstacle (SPEC §12.43)
 
   fire_smoke:                 # stays disabled unless an open fire/smoke model is shipped (SPEC §5)
     enabled: false

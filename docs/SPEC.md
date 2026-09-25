@@ -282,3 +282,4 @@ Always return a finite float; on any exception return the last score.
     - **stopped_vehicle** excludes vehicles inside the intersection (left-turners yielding, spillback) and in the new `bus_stops` layer.
     - **wrong_way** requires the footprint at least 1 m inside the wrong lane: in this oblique view a car hugging the centre line projects tens of cm into the opposing lane.
     - `islands` and `bus_stops` are in the calibration tool, the overlay and `Scene.transformed`.
+43. **road_obstacle.** Birds are ignored (`ignore_classes`): pigeons land on the road and fly off. A bag must lie still, below 0.5 m/s for `static_sec`; a moving bag is being carried by someone the detector missed. Animals may move: a dog wandering on the road is an obstacle. Sightings are grouped by the persistence-merged `obj_id`, so an id switch no longer splits one lying object into two events (reproduced; regression test).

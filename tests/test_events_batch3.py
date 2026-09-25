@@ -134,6 +134,24 @@ def test_animal_on_the_road_with_a_short_occlusion() -> None:
     assert len(segs) == 1 and near(segs[0], 0.0, 8.0) and segs[0].score == 1.0
 
 
+def test_birds_and_moving_bags_are_not_obstacles() -> None:
+    f = frames(0, 8)
+    t = f / FPS
+    pigeon = track(1, f, 130, 45, cls="bird", w_px=4, h_px=3)  # sits on the road for 8 s
+    blown = track(2, f, 60 + 2.0 * t, 50, cls="suitcase", w_px=6, h_px=6)  # moving: carried, not lying
+    assert road_obstacle.detect(kin(pigeon, blown), SCENE, ctx(8), cfg("road_obstacle")) == []
+
+
+def test_a_lying_object_is_one_event_across_an_id_switch() -> None:
+    f1, f2 = frames(0, 5), frames(5.2, 12)
+    parts = [
+        track(1, f1, 140, 48, cls="suitcase", w_px=6, h_px=6),
+        track(2, f2, 140.2, 48, cls="suitcase", w_px=6, h_px=6),  # re-detected under a new id
+    ]
+    segs = road_obstacle.detect(kin(*parts), SCENE, ctx(12), cfg("road_obstacle"))
+    assert len(segs) == 1 and near(segs[0], 0.0, 12.0, tol=0.3), segs
+
+
 def test_carried_bags_brief_or_off_road_objects_are_not_obstacles() -> None:
     f = frames(0, 8)
     t = f / FPS
