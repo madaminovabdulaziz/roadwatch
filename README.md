@@ -16,17 +16,17 @@ lives in the `roadwatch/` package.
 ## Run it (what the organizers run)
 
 Requirements: Linux, Python 3.10–3.12, an NVIDIA GPU with driver ≥ 525 (tested on a T4). No internet is
-needed after the two setup lines.
+needed after the install line: the weights are in the repository (`weights/`, checked against
+`weights/SHA256SUMS`).
 
 ```bash
 pip install -r requirements.txt          # pinned lock; torch/torchvision are the CUDA 12.6 builds
-bash weights/download.sh                 # fetch weights once, before the offline run (checksummed)
 python run_submission.py --videos /data/test --out predictions.json --team roadwatch
 python evaluate.py --pred predictions.json --validate-only
 ```
 
-While the repository is private, `weights/download.sh` needs `GITHUB_TOKEN` (a token with read access to
-the repository) in the environment.
+`bash weights/download.sh` re-fetches the same weights from the GitHub release `weights-v1` if the files
+were lost (it keeps files whose checksum already matches).
 
 ### With Docker
 

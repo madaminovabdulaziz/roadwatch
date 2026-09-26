@@ -25,11 +25,14 @@ report*.json
 configs/*.bak
 configs/*.tmp
 
-# Model weights live in the release archive fetched by weights/download.sh
+# Model weights: the two files the detector loads are committed (81 MB, under GitHub's 100 MB limit), so
+# the organizers' two commands need nothing else; weights/download.sh re-fetches them from the release
 weights/*
 !weights/download.sh
 !weights/README.md
 !weights/SHA256SUMS
+!weights/yolo11m.torchscript
+!weights/yolo11m.json
 
 # OS / editors
 .DS_Store

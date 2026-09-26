@@ -1,0 +1,158 @@
+{
+ "model": "yolo11m",
+ "format": "TorchScript; fused YOLO11 without box decoding (roadwatch.perception.detector decodes)",
+ "input": "RGB float [0, 1], NCHW; H and W multiples of 32; any batch size",
+ "outputs": [
+  "box_dist (B, 4 * reg_max, A): DFL logits per side",
+  "class_logits (B, nc, A)"
+ ],
+ "strides": [
+  8,
+  16,
+  32
+ ],
+ "reg_max": 16,
+ "nc": 80,
+ "names": {
+  "0": "person",
+  "1": "bicycle",
+  "2": "car",
+  "3": "motorcycle",
+  "4": "airplane",
+  "5": "bus",
+  "6": "train",
+  "7": "truck",
+  "8": "boat",
+  "9": "traffic light",
+  "10": "fire hydrant",
+  "11": "stop sign",
+  "12": "parking meter",
+  "13": "bench",
+  "14": "bird",
+  "15": "cat",
+  "16": "dog",
+  "17": "horse",
+  "18": "sheep",
+  "19": "cow",
+  "20": "elephant",
+  "21": "bear",
+  "22": "zebra",
+  "23": "giraffe",
+  "24": "backpack",
+  "25": "umbrella",
+  "26": "handbag",
+  "27": "tie",
+  "28": "suitcase",
+  "29": "frisbee",
+  "30": "skis",
+  "31": "snowboard",
+  "32": "sports ball",
+  "33": "kite",
+  "34": "baseball bat",
+  "35": "baseball glove",
+  "36": "skateboard",
+  "37": "surfboard",
+  "38": "tennis racket",
+  "39": "bottle",
+  "40": "wine glass",
+  "41": "cup",
+  "42": "fork",
+  "43": "knife",
+  "44": "spoon",
+  "45": "bowl",
+  "46": "banana",
+  "47": "apple",
+  "48": "sandwich",
+  "49": "orange",
+  "50": "broccoli",
+  "51": "carrot",
+  "52": "hot dog",
+  "53": "pizza",
+  "54": "donut",
+  "55": "cake",
+  "56": "chair",
+  "57": "couch",
+  "58": "potted plant",
+  "59": "bed",
+  "60": "dining table",
+  "61": "toilet",
+  "62": "tv",
+  "63": "laptop",
+  "64": "mouse",
+  "65": "remote",
+  "66": "keyboard",
+  "67": "cell phone",
+  "68": "microwave",
+  "69": "oven",
+  "70": "toaster",
+  "71": "sink",
+  "72": "refrigerator",
+  "73": "book",
+  "74": "clock",
+  "75": "vase",
+  "76": "scissors",
+  "77": "teddy bear",
+  "78": "hair drier",
+  "79": "toothbrush"
+ },
+ "source": {
+  "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
+  "sha256": "d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95",
+  "licence": "AGPL-3.0 (Ultralytics)"
+ },
+ "exported_with": {
+  "ultralytics": "8.4.161",
+  "torch": "2.8.0"
+ },
+ "sha256": "11483715fffd8929911e7ef66bc10ed5708f82a72120896b2c76aaa91f4ff4f4",
+ "parity": {
+  "video": "C3902_head.MP4",
+  "settings": {
+   "imgsz": 960,
+   "conf": 0.25,
+   "iou": 0.7,
+   "max_det": 300
+  },
+  "frames": [
+   {
+    "frame": 0,
+    "ultralytics": 49,
+    "roadwatch": 49,
+    "matched": 49
+   },
+   {
+    "frame": 1,
+    "ultralytics": 48,
+    "roadwatch": 48,
+    "matched": 48
+   },
+   {
+    "frame": 2,
+    "ultralytics": 54,
+    "roadwatch": 54,
+    "matched": 54
+   },
+   {
+    "frame": 3,
+    "ultralytics": 47,
+    "roadwatch": 47,
+    "matched": 47
+   },
+   {
+    "frame": 4,
+    "ultralytics": 49,
+    "roadwatch": 49,
+    "matched": 49
+   },
+   {
+    "frame": 5,
+    "ultralytics": 47,
+    "roadwatch": 47,
+    "matched": 47
+   }
+  ],
+  "min_iou": 0.999983,
+  "max_conf_diff": 4.89e-06,
+  "passed": true
+ }
+}
