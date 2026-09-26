@@ -21,8 +21,8 @@ from roadwatch.config import REPO_ROOT  # noqa: E402
 from roadwatch.devdata import diff_predictions  # noqa: E402
 
 
-def run_harness(videos: Path, out: Path) -> dict:
-    """One official run; raises with the harness output if it fails."""
+def run_harness(videos: Path, out: Path, time_factor: float | None = None) -> dict:
+    """One official run (optionally with the harness's own --time-factor); raises if it fails."""
     cmd = [
         sys.executable,
         "run_submission.py",
@@ -33,6 +33,8 @@ def run_harness(videos: Path, out: Path) -> dict:
         "--team",
         "roadwatch",
     ]
+    if time_factor is not None:
+        cmd += ["--time-factor", str(time_factor)]
     res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(f"harness failed:\n{res.stdout}\n{res.stderr}")

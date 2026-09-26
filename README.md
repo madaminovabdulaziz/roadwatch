@@ -45,6 +45,12 @@ python run_submission.py --videos samples --out predictions_samples.json --team 
 ```
 
 Two runs give the same file: seeds are fixed, cuDNN is deterministic and TF32 is off (`roadwatch/config.py`).
+One condition: the machine must be fast enough to finish inside the 3x budget without pacing. On a
+slower machine the pipeline thins its work to stay inside the budget, so its output depends on the
+machine's speed. A Kaggle T4 with 4 CPU cores runs both samples at 2.7x with pacing. The committed file was
+written by `python scripts/make_predictions_samples.py --unpaced` (pacing off, and the harness's own
+`--time-factor` relaxed so the slower machine is not cut off), which is the output a fast enough machine
+produces.
 
 ## Develop
 

@@ -7,7 +7,9 @@ fresh run against the committed file (events exact, risk within 1e-6): the repro
 --unpaced runs the harness with configs/unpaced.yaml (pacing off). On a machine too slow for the 3x
 budget (Kaggle's 4 cores: 2.7x with pacing) the pipeline thins its work by wall-clock time, so its
 output depends on the machine. Unpaced, the output is the deterministic full-quality one that any
-machine fast enough to finish inside the budget reproduces exactly (SPEC §12.54).
+machine fast enough to finish inside the budget reproduces exactly (SPEC §12.54). Because the slow
+machine then needs a little over 3x, the harness runs with its own --time-factor at
+UNPACED_TIME_FACTOR, so it does not score the videos as empty (the file's log records that budget).
 
 Usage: python scripts/make_predictions_samples.py [samples/] [--check] [--unpaced]
 """
@@ -31,6 +33,7 @@ from scripts.check_determinism import run_harness  # noqa: E402
 
 TARGET = REPO_ROOT / "predictions_samples.json"
 WEB_COPY = REPO_ROOT / "web" / "public" / "data" / "predictions_samples.json"
+UNPACED_TIME_FACTOR = 10.0
 
 
 def main() -> int:
@@ -47,14 +50,15 @@ def main() -> int:
     if args.check:
         if not args.out.exists():
             ap.error(f"{args.out} does not exist yet")
-        fresh = run_harness(args.videos.resolve(), Path(tempfile.mkdtemp()) / "fresh.json")
+        time_factor = UNPACED_TIME_FACTOR if args.unpaced else None
+        fresh = run_harness(args.videos.resolve(), Path(tempfile.mkdtemp()) / "fresh.json", time_factor)
         problems = diff_predictions(json.loads(args.out.read_text(encoding="utf-8")), fresh)
         for p in problems:
             print("DIFF:", p)
         print("REPRODUCED" if not problems else f"{len(problems)} difference(s)")
         return 0 if not problems else 1
 
-    pred = run_harness(args.videos.resolve(), args.out)
+    pred = run_harness(args.videos.resolve(), args.out, UNPACED_TIME_FACTOR if args.unpaced else None)
     errors, warnings = evaluate.validate(pred)
     for w in warnings:
         print("warning:", w)
