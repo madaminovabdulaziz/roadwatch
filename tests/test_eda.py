@@ -84,6 +84,7 @@ def test_eda_writes_all_outputs_deterministically(tmp_path: Path, tiny_video: Pa
         "summary.json",
         "flow_field.json",
         "heatmap.jpg",
+        "heatmap_people.jpg",
         "trajectories.jpg",
         "lane_flow.jpg",
         "tiny/counts.json",
@@ -102,3 +103,13 @@ def test_eda_writes_all_outputs_deterministically(tmp_path: Path, tiny_video: Pa
     assert max(counts["series"]["car"]) == 2.0  # two cars visible in every frame
     density = json.loads((outs[0] / "other" / "density.json").read_text())
     assert density["vehicles"] == [2, 0] and density["persons"] == [1, 0]
+    assert density["covered_sec"] == [60.0, 10.0]
+
+
+def test_the_last_partial_minute_is_a_per_minute_rate():
+    """One car appearing in the last 10 s of a 70 s video is a rate of 6 per minute, not a count of 1."""
+    from scripts import eda
+
+    tt = pd.DataFrame({"track_id": [1, 1, 2], "t": [5.0, 6.0, 65.0], "cls": ["car", "car", "car"]})
+    density = eda.density_per_minute(tt, 70.0)
+    assert density["vehicles"] == [1.0, 6.0] and density["persons"] == [0.0, 0.0]

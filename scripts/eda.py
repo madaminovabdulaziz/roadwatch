@@ -4,10 +4,12 @@ Writes web/public/data/eda/ (JSON for interactive charts, images only for overla
 - summary.json: per video resolution, fps, duration, codec, pixel format, mean brightness over time
   (lighting proxy; needs the video file, else stats come from the track-cache sidecar);
 - <video>/counts.json: mean visible objects per class in 1 s bins;
-- <video>/density.json: new vehicle / person tracks per minute;
+- <video>/density.json: new vehicle / person tracks per minute (the last, partial minute as a rate);
 - <video>/speeds.json: speed histogram (km/h) of moving vehicles per lane (needs the homography);
-- <video>/signals.json: signal timeline (only with --signals: decodes frames at native size);
-- flow_field.json + lane_flow.jpg, heatmap.jpg, trajectories.jpg over configs/reference.jpg, pooled
+- <video>/signals.json: signal timeline, the one scripts/cache_tracks.py stored with the tracks (what
+  Part A used); --signals re-estimates it from the video instead (decodes frames at native size);
+- flow_field.json + lane_flow.jpg, heatmap.jpg (tracks passing each spot), heatmap_people.jpg (the
+  same for pedestrians), trajectories.jpg over configs/reference.jpg, pooled
   over all videos (1920 px wide; JPEG, since PNGs of a photo are ~3 MB each on a phone).
 Everything is deterministic (sorted keys, rounded numbers), so re-running gives identical files.
 
@@ -31,7 +33,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from roadwatch.config import CACHE_DIR, CONFIG_DIR, REPO_ROOT, load_thresholds  # noqa: E402
-from roadwatch.devdata import cached_meta, cached_scene, tracks_in_reference  # noqa: E402
+from roadwatch.devdata import cached_meta, cached_scene, cached_signals, tracks_in_reference  # noqa: E402
 from roadwatch.features import add_kinematics  # noqa: E402
 from roadwatch.scene.flow import flow_field, step_velocities  # noqa: E402
 from roadwatch.scene.light import SignalStateEstimator  # noqa: E402
@@ -45,6 +47,8 @@ SPEED_BIN_KMH = 5
 SPEED_MAX_KMH = 100
 MOVING_MPS = 1.0  # speeds below this are waiting, not driving, and stay out of the histogram
 JPEG_QUALITY = 85
+HEAT_GRID_PX = 4  # heatmap cell, in output pixels: a track counts once per cell it passes
+HEAT_TOP_PERCENTILE = 99.5  # colour scale saturates here, so a few busy cells do not wash out the rest
 
 
 def _dump(path: Path, data: Any) -> None:
@@ -97,18 +101,23 @@ def counts_per_second(tt: pd.DataFrame, duration: float) -> dict[str, Any]:
 
 
 def density_per_minute(tt: pd.DataFrame, duration: float) -> dict[str, Any]:
-    """Tracks that appear in each minute, for vehicles and persons."""
+    """Tracks that appear per minute, for vehicles and persons, in each minute of the video.
+
+    A video rarely ends on a whole minute; its last, partial minute is scaled to a per-minute rate
+    (`covered_sec` says by how much), so it does not read as traffic suddenly thinning out.
+    """
     groups = load_thresholds()["perception"]["tracker_groups"]
     n_min = max(1, math.ceil(duration / 60))
+    covered = [min(60.0, duration - 60.0 * m) for m in range(n_min)]
     first = tt.groupby("track_id").agg(t=("t", "min"), cls=("cls", "first"))
     minute = (first["t"] // 60).astype(int).clip(0, n_min - 1)
-    out: dict[str, Any] = {"minute": list(range(n_min))}
+    out: dict[str, Any] = {"minute": list(range(n_min)), "covered_sec": [round(c, 1) for c in covered]}
     for name, members in (
         ("vehicles", groups["vehicles"] + groups["two_wheelers"]),
         ("persons", groups["persons"]),
     ):
-        hits = minute[first["cls"].astype(str).isin(members)]
-        out[name] = [int(v) for v in np.bincount(hits, minlength=n_min)]
+        hits = np.bincount(minute[first["cls"].astype(str).isin(members)], minlength=n_min)
+        out[name] = [round(float(h) * 60.0 / max(c, 1.0), 1) for h, c in zip(hits, covered, strict=True)]
     return out
 
 
@@ -133,19 +142,30 @@ def _scaled(bg: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def heatmap_image(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
-    """Footprint density (log scale, blurred) as a colour overlay on the background."""
+    """How many tracks pass each spot (log scale) as a colour overlay on the background.
+
+    Each track counts once per spot it passes, however long it stays there, so the map shows where
+    road users travel; per-frame counts are dominated by the parked cars that stand all video long.
+    """
     img, k = _scaled(bg)
     h, w = img.shape[:2]
-    xs = np.clip((tt["fx"].to_numpy() * k).astype(int), 0, w - 1)
-    ys = np.clip((tt["fy"].to_numpy() * k).astype(int), 0, h - 1)
-    density = np.zeros((h, w), np.float32)
-    np.add.at(density, (ys, xs), 1.0)
-    density = cv2.GaussianBlur(density, (0, 0), sigmaX=6)
-    if density.max() > 0:
-        density = np.log1p(density) / np.log1p(density.max())
+    grid_h, grid_w = h // HEAT_GRID_PX, w // HEAT_GRID_PX
+    passes = np.zeros((grid_h, grid_w), np.float32)
+    mask = np.zeros((grid_h, grid_w), np.uint8)
+    for _, rows in tt.sort_values(["track_id", "t"], kind="stable").groupby("track_id", sort=True):
+        pts = np.round(rows[["fx", "fy"]].to_numpy() * k / HEAT_GRID_PX).astype(np.int32)
+        if len(pts) < 2:
+            continue
+        mask[:] = 0
+        cv2.polylines(mask, [pts.reshape(-1, 1, 2)], False, 1, 2)
+        passes += mask
+    density = cv2.GaussianBlur(cv2.resize(passes, (w, h)), (0, 0), sigmaX=3)
+    density = np.log1p(density)
+    if (density > 0).any():
+        density = np.clip(density / np.percentile(density[density > 0], HEAT_TOP_PERCENTILE), 0, 1)
     colour = cv2.applyColorMap((density * 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
-    alpha = np.clip(density * 1.5, 0, 0.85)[..., None]
-    return (img * (1 - alpha) + colour * alpha).astype(np.uint8)
+    alpha = np.clip(density * 1.2, 0, 0.85)[..., None]
+    return ((img * 0.6) * (1 - alpha) + colour * alpha).astype(np.uint8)
 
 
 def trajectories_image(tt: pd.DataFrame, bg: np.ndarray) -> np.ndarray:
@@ -190,7 +210,7 @@ def main() -> int:
     ap.add_argument("--cache", type=Path, default=CACHE_DIR / "tracks")
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "eda")
     ap.add_argument(
-        "--signals", action="store_true", help="also estimate the signal timeline (decodes 4K frames)"
+        "--signals", action="store_true", help="re-estimate the signal timeline (decodes 4K frames)"
     )
     args = ap.parse_args()
 
@@ -228,9 +248,12 @@ def main() -> int:
         video_scene = cached_scene(stem, args.cache, scene)
         if video_scene.has("homography"):
             _dump(args.out / stem / "speeds.json", speed_histograms(add_kinematics(tt, video_scene)))
+        timeline = cached_signals(stem, args.cache, scene)
         if args.signals and path and video_scene.has("signals"):
             frames = read_window(path, 0.0, math.inf, stride=6, skip_nonref=True)
-            _dump(args.out / stem / "signals.json", SignalStateEstimator(video_scene).timeline(frames))
+            timeline = SignalStateEstimator(video_scene).timeline(frames)
+        if timeline:
+            _dump(args.out / stem / "signals.json", timeline)
         # recordings are framed differently: pool tracks in reference-frame pixels (SPEC §12.34), and
         # offset track ids, which restart per video, so pooled tracks never join across videos
         in_ref = tracks_in_reference(tt, stem, args.cache)
@@ -240,6 +263,7 @@ def main() -> int:
     _dump(args.out / "summary.json", {"videos": summary})
 
     all_tt = pd.concat(pooled, ignore_index=True)
+    persons = load_thresholds()["perception"]["tracker_groups"]["persons"]
     width, height = summary[0]["width"], summary[0]["height"]
     ref_path = CONFIG_DIR / "reference.jpg"
     reference = cv2.imread(str(ref_path)) if ref_path.exists() else None
@@ -248,6 +272,7 @@ def main() -> int:
     _dump(args.out / "flow_field.json", field)
     for name, img in (
         ("heatmap.jpg", heatmap_image(all_tt, bg)),
+        ("heatmap_people.jpg", heatmap_image(all_tt[all_tt["cls"].astype(str).isin(persons)], bg)),
         ("trajectories.jpg", trajectories_image(all_tt, bg)),
         ("lane_flow.jpg", lane_flow_image(field, bg, scene)),
     ):

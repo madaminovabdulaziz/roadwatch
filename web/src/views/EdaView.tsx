@@ -62,7 +62,11 @@ export default function EdaView() {
       {stem && <PerVideo key={stem} stem={stem} />}
 
       <Section title="Where things move">
-        <Images files={["heatmap.jpg", "trajectories.jpg"]} captions={["Footprint density (log scale)", "Tracks, colour = direction of travel"]} />
+        <Images files={["heatmap.jpg", "trajectories.jpg"]} captions={["Tracks passing each spot (log scale)", "Tracks, colour = direction of travel"]} />
+      </Section>
+
+      <Section title="Where people walk" changed="people also cut across the carriageway between and beside the zebras, so jaywalking is judged by where a person's feet are on the road, not by a hand-made list of spots.">
+        <Images files={["heatmap_people.jpg"]} captions={["Pedestrian tracks passing each spot (log scale)"]} />
       </Section>
 
       <Section title="Learned traffic direction" changed="lane directions in the scene file are proposed from this field (scripts/learn_lane_flow.py) instead of being guessed by hand.">
@@ -133,7 +137,7 @@ function PerVideo({ stem }: { stem: string }) {
               { x: density.data.minute, y: density.data.vehicles, type: "bar", name: "vehicles", marker: { color: OBJECT_COLORS.car } },
               { x: density.data.minute, y: density.data.persons, type: "bar", name: "pedestrians", marker: { color: OBJECT_COLORS.person } },
             ]}
-            layout={{ barmode: "group", xaxis: { title: { text: "minute" } }, yaxis: { title: { text: "new tracks" } } }}
+            layout={{ barmode: "group", xaxis: { title: { text: "minute" } }, yaxis: { title: { text: "new tracks per minute" } } }}
           />
         )}
       </Section>
