@@ -15,6 +15,8 @@ Details:
   starting within confirm_within_sec of the contact; "leave": an involved track ends within
   confirm_within_sec (a fallen rider or a car knocked out of view). A person falling needs no more.
 - Queued pairs are excluded by the shock requirement: waiting cars do not decelerate hard.
+- With a pedestrian in the pair the evidence has to come from the pedestrian: a fall, or the person lost
+  mid-frame right after the contact. A car braking to a stop beside someone is a drop-off or a yield.
 - Single vehicle "near the road edge" = footprint off every lane or off the carriageway.
 - The end is where every involved object is slower than end_speed_mps for end_hold_sec; if that never
   happens, the last sample of the involved tracks.
@@ -104,6 +106,27 @@ def shocks(rows: pd.DataFrame, t0: float, p: dict[str, Any]) -> set[str]:
         ):
             kinds.add("fall")
     return kinds
+
+
+def person_hit(
+    tracks: list[pd.DataFrame], t0: float, kinds: set[str], p: dict[str, Any], exits: set[int]
+) -> bool:
+    """For a pair with a pedestrian, whether the pedestrian shows it: a fall, or the person lost mid-frame
+    right after the contact. Pairs without a pedestrian pass.
+
+    A vehicle braking hard and then standing next to a person is what a drop-off, a pick-up or a driver
+    giving way looks like, and in C3896 (3:15) it passed both the shock and the confirmation (SPEC §12.58).
+    """
+    persons = [rows for rows in tracks if str(rows["cls"].iloc[0]) in group_members("persons")]
+    if not persons:
+        return True
+    if "fall" in kinds:
+        return True
+    return any(
+        int(rows["track_id"].iloc[0]) not in exits
+        and rows["t"].to_numpy()[-1] <= t0 + p["confirm_within_sec"]
+        for rows in persons
+    )
 
 
 def confirmed(
@@ -214,6 +237,8 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
         kinds = shocks(pair[0], t0, p) | shocks(pair[1], t0, p)
         if not kinds or not confirmed(pair, t0, kinds, p, exits):
             continue
+        if not person_hit(pair, t0, kinds, p, exits):
+            continue  # a car braking to a stop beside a pedestrian is a drop-off or a yield, not a crash
         score = min(1.0, 0.6 + 0.2 * len(kinds))
         segments.append(Segment(t0, end_time(pair, t0, p), LABEL, score, (a, b), {"shocks": sorted(kinds)}))
 

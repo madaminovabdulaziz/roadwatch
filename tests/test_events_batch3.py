@@ -55,6 +55,16 @@ def test_pedestrian_knocked_down_is_an_accident() -> None:
     assert len(segs) == 1 and segs[0].meta["shocks"] == ["fall"]
 
 
+def test_a_car_braking_to_a_stop_beside_a_pedestrian_is_not_an_accident() -> None:
+    """C3896 3:15: a car pulled up hard beside a person at the kerb (a drop-off): contact distance, a
+    braking shock and a vehicle that then stays stopped, but the person neither fell nor vanished."""
+    f = frames(0, 12)
+    t = f / FPS
+    car = track(1, f, stop_by(t, 80, 8, 4.0, 8), 45)  # 8 m/s, braking at 8 m/s^2 from 4.0 s, stops at x = 116
+    person = track(2, f, 115.8, 44.2, cls="person", w_px=8, h_px=17)  # beside its front, upright throughout
+    assert accident.detect(kin(car, person), SCENE, ctx(12), cfg("accident")) == []
+
+
 def test_occlusion_without_shock_is_not_an_accident() -> None:
     f = frames(0, 12)
     t = f / FPS

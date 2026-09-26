@@ -275,7 +275,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       max_gap_sec: 3.0            # a stopped vehicle may be hidden (pedestrians) this long
 
   congestion:
-    enabled: false
+    enabled: true                # 0 events on all three samples with every rule on (SPEC §12.57, §12.58)
     min_score: 0.5
     merge_gap: 5.0
     min_dur: 20.0
