@@ -75,14 +75,28 @@ Download `/kaggle/working/tracks/*.parquet` + `*.json` (Output panel) into `cach
 
 ## Cell 5: the organizers' run on the samples (RUNBOOK P0.4, P3.2)
 
-Run after Cell 4 (venv, samples and weights in place). This is exactly what the organizers do, and the
-harness log gives the real budget use per video.
+Run after Cell 4 (venv, samples and weights in place). This is exactly what the organizers do (pacing on,
+3x budget), and the harness log gives the real budget use per video. Its output is kept as
+`runs/kaggle_t4_official.json`: the website's home page and report take the runtime from it.
 
 ```python
-!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python run_submission.py --videos /tmp/samples --out /kaggle/working/predictions_samples.json --team roadwatch
-!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python evaluate.py --pred /kaggle/working/predictions_samples.json --validate-only
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python run_submission.py --videos /tmp/samples --out /kaggle/working/kaggle_t4_official.json --team roadwatch
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python evaluate.py --pred /kaggle/working/kaggle_t4_official.json --validate-only
 import json
-for video, log in json.load(open("/kaggle/working/predictions_samples.json"))["log"].items():
-    print(f"{video}: {log['total_sec'] / log['duration']:.2f}x duration (budget 3.00x)")
+for video, log in json.load(open("/kaggle/working/kaggle_t4_official.json"))["log"].items():
+    print(f"{video}: {log['total_sec'] / log['duration']:.2f}x duration (budget 3.00x), errors: {log['errors']}")
 ```
 
+## Cell 6: the `predictions_samples.json` deliverable
+
+With 4 CPU cores the pipeline needs pacing to stay inside 3x, and paced output depends on the machine's
+speed. The deliverable is the unpaced output, which any machine fast enough for the budget reproduces
+(SPEC §12.54); the script relaxes the harness's own time factor so Kaggle's slower CPU is not cut off.
+
+```python
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python scripts/make_predictions_samples.py /tmp/samples --unpaced --out /kaggle/working/predictions_samples_unpaced.json
+!cd /tmp/roadwatch && env -u PYTHONPATH /tmp/rw-venv/bin/python evaluate.py --pred /kaggle/working/predictions_samples_unpaced.json --validate-only
+```
+
+Download both files. Locally: `kaggle_t4_official.json` -> `runs/`, `predictions_samples_unpaced.json` ->
+`predictions_samples.json` in the repo root, then `bash scripts/build_site_data.sh samples/`.
