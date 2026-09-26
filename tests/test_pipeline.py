@@ -81,12 +81,19 @@ def test_disabled_class_and_missing_layers_do_not_run(monkeypatch: pytest.Monkey
     assert pipeline.events_from_tracks(tracks(), META, SCENE, thresholds=enabled) == [[2.0, 4.0, "wrong_way"]]
 
 
+def all_disabled() -> dict:
+    th = copy.deepcopy(load_thresholds())
+    for c in th["classes"].values():
+        c["enabled"] = False
+    return th
+
+
 def test_force_runs_disabled_rules_for_tuning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline, "RULES", {"jaywalking": fake_rule("jaywalking")})
     ctx = VideoContext(meta=META, stride=3)
     kin = pipeline.prepare(tracks(), SCENE)
-    assert pipeline.run_rules(kin, SCENE, ctx) == []
-    assert len(pipeline.run_rules(kin, SCENE, ctx, force=True)) == 1
+    assert pipeline.run_rules(kin, SCENE, ctx, all_disabled()) == []
+    assert len(pipeline.run_rules(kin, SCENE, ctx, all_disabled(), force=True)) == 1
 
 
 def test_rule_cannot_emit_another_label(monkeypatch: pytest.MonkeyPatch, enabled: dict) -> None:
@@ -106,4 +113,5 @@ def test_detect_events_skips_perception_when_nothing_is_enabled(
         raise AssertionError("perception must not run when no class can be emitted")
 
     monkeypatch.setattr("roadwatch.perception.run.run_perception", no_perception)
+    monkeypatch.setattr(pipeline, "load_thresholds", all_disabled)
     assert pipeline.detect_events(str(tiny_video)) == []

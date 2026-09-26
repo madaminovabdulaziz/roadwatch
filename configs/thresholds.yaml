@@ -159,7 +159,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       evasive_window_sec: 2.0       # evasive action is searched this long before and after the TTC trigger
 
   red_light:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5
@@ -169,9 +169,10 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       max_entry_sec: 3.0          # after crossing, the front must enter the intersection this soon ...
       stop_speed_mps: 1.0         # ... without stopping after the line: below this speed ...
       stop_hold_sec: 1.0          # ... for this long (stop_line's stopped_sec) is stopping past the line
+      lost_crossing_sec: 4.0      # a red runner lost soon after the line: the event lasts this long (SPEC §12.51)
 
   wrong_way:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5
@@ -209,7 +210,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       queue_lateral_m: 2.0        # outside any lane: lined up along the vehicle's heading within this
 
   jaywalking:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 1.0
@@ -226,7 +227,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       rider_track_frac: 0.3      # a track matched to a two-wheeler this often is a rider throughout
 
   failure_to_yield:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5
@@ -249,7 +250,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       min_turn_deg: 45.0          # a movement with less heading change is not a turn
 
   solid_line_crossing:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5
@@ -257,7 +258,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       min_lateral_m: 1.0
 
   stop_line:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5
@@ -284,7 +285,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       clear_hold_sec: 5.0
 
   road_obstacle:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.5

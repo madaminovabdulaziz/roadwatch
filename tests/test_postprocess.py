@@ -14,8 +14,10 @@ CTX = VideoContext(meta=VideoMeta("v.mp4", 30.0, 100, 100, 3000), stride=3)
 
 
 def thresholds(**enabled: bool) -> dict:
-    """The real thresholds with chosen classes switched on and round per-class values for the tests."""
+    """The real thresholds with only the chosen classes switched on and round per-class values."""
     th = copy.deepcopy(load_thresholds())
+    for c in th["classes"].values():
+        c["enabled"] = False  # independent of which classes the live config switches on
     for label, on in enabled.items():
         th["classes"][label].update(enabled=on, min_score=0.5, merge_gap=1.0, min_dur=0.5)
     return th

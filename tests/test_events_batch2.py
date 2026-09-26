@@ -121,6 +121,21 @@ def test_crossing_then_stopping_before_the_intersection_is_not_red_light() -> No
     assert red_light.detect(tt, SCENE, ctx(30, RED), cfg("red_light")) == []
 
 
+def test_a_red_runner_whose_track_breaks_after_the_line_is_still_red_light() -> None:
+    # C3905 0:33.5: a delivery rider jumps the red and the tracker loses (re-ids) it 1.1 s after the
+    # line, on the zebra, still accelerating: it never "enters the intersection" under its first id.
+    # Lost while moving is not stopped: the event ends when a vehicle would have cleared the junction.
+    f = frames(0, 5.8)
+    t = f / FPS
+    wait = 95.0 - 2.1 / 2 - 0.2  # footprint while waiting: the 2.1 m motorcycle's front 0.2 m before the line
+    rider = track(1, f, np.where(t < 4.0, wait, wait + 0.5 * 3.0 * (t - 4.0) ** 2), 45, cls="motorcycle")
+    segs = red_light.detect(kin(rider), SCENE, ctx(20, RED), cfg("red_light"))
+    assert len(segs) == 1
+    assert segs[0].end - segs[0].start == pytest.approx(
+        cfg("red_light")["params"]["lost_crossing_sec"], abs=0.2
+    )
+
+
 def test_a_short_red_glitch_is_not_a_red_phase() -> None:
     glitch = {"L1": [(0.0, 3.8, "green"), (3.8, 5.3, "red"), (5.3, 30.0, "green")]}  # a 1.5 s "red"
     assert red_light.detect(kin(straight(1, 50, 45, 10, 12)), SCENE, ctx(12, glitch), cfg("red_light")) == []

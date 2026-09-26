@@ -89,7 +89,19 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                     continue
                 entered = np.flatnonzero(front_in[k - 1 :] & (t[k - 1 :] <= t_cross + p["max_entry_sec"]))
                 if not len(entered):
-                    continue  # crept past the line without entering: stop_line's business
+                    # Lost soon after the line while still moving (the tracker re-ids it, it drives into
+                    # an occlusion) is not stopping: it ran the light. Its track says nothing about
+                    # when it cleared the junction, so the event lasts lost_crossing_sec (SPEC §12.51).
+                    lost_moving = (
+                        t[-1] <= t_cross + p["max_entry_sec"]
+                        and speed[-1] > p["stop_speed_mps"]
+                        and not _stopped(t[k:], speed[k:], p, gap)
+                    )
+                    if lost_moving:
+                        end = min(t_cross + p["lost_crossing_sec"], ctx.meta.duration)
+                        score = float(min(1.0, 0.5 + since / 2.0))
+                        segments.append(Segment(t_cross, end, LABEL, score, (tid,), {"stop_line": sl["id"]}))
+                    continue  # otherwise it crept past the line without entering: stop_line's business
                 entry = k - 1 + int(entered[0])
                 if _stopped(t[k : entry + 1], speed[k : entry + 1], p, gap):
                     continue  # stopped between the line and the intersection: stop_line's business
