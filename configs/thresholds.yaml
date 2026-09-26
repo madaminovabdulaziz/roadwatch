@@ -316,8 +316,22 @@ risk:                         # SPEC §8 (Part B)
   min_mover_speed_mps: 3.0    # a conflict needs one party moving at least this fast ...
   min_track_age_sec: 1.0      # ... and both tracks at least this old
   decel_floor_mps2: 4.0       # braking below this is everyday driving, not a warning sign
+  decel_min_age_sec: 1.5      # braking is read only from tracks this old (a new box's first fits are noise) ...
+  decel_cap_mps2: 12.0        # ... and above this it is a measurement artefact, not braking (tyres give ~9)
+  max_ground_m_per_px: 0.08   # no kinematics where one 4K-equivalent pixel is more ground than this (SPEC §12.47)
+  max_plausible_speed_mps: 25.0  # 90 km/h at a signalised junction: faster means the track jumped vehicles
   max_pair_dist_m: 25.0
   min_closing_speed_mps: 1.0
+  drac_min_mps2: 5.0          # a conflict needs emergency braking to stop short (SPEC §12.47); drivers here
+  drac_min_person_mps2: 4.0   # ... stop behind the queue at 3-5 m/s^2. Facing a pedestrian: this
+  min_conflict_closing_mps: 2.0
+  max_conflict_ttc_sec: 4.0
+  conflict_persist_frames: 3  # the same pair in conflict this many processed frames in a row (0.3 s at 10 Hz) ...
+  conflict_gap_consistency: 0.5  # ... with its gap really shrinking at >= this share of the closing speed
+  min_gap_m: 0.3              # bumper gaps are floored here (overlapping boxes, measurement noise)
+  path_margin_m: 0.5          # crossing traffic is "in the path" within both half-widths plus this ...
+  path_margin_person_m: 0.2   # ... a pedestrian within this (walking beside a car is not in its path)
+  parallel_max_deg: 30.0      # traffic moving within this of a's line (either way) must overlap it laterally now
   conflict_radius_m: 2.5       # paths closer than this at their closest approach are a conflict (SPEC §12.39) ...
   conflict_radius_person_m: 2.0  # ... or this when a pedestrian is involved
   person_classes: [person]

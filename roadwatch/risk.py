@@ -39,7 +39,6 @@ import pandas as pd
 from roadwatch import budget
 from roadwatch.config import load_thresholds
 from roadwatch.events.common import lane_world_dirs
-from roadwatch.features import pair_features
 from roadwatch.scene.light import SignalStateEstimator
 from roadwatch.scene.registration import OnlineRegistration
 from roadwatch.scene.scene import Scene
@@ -126,19 +125,183 @@ def _slope(samples: deque, c: dict[str, Any]) -> np.ndarray | None:
     return (t[:, None] * (arr[:, 1:] - arr[:, 1:].mean(axis=0))).sum(axis=0) / denom
 
 
+def ground_scale(scene: Scene, foot: np.ndarray) -> np.ndarray:
+    """Road-plane metres per pixel at each image point (worst direction), as if the frame were 3840 px wide.
+
+    Far from the camera a few pixels of box jitter are metres of apparent motion, so tracks there carry
+    no kinematics (SPEC §12.47). Scenes without an `image_size` (synthetic tests) are never gated.
+    """
+    size = scene.layers.get("image_size")
+    if not size or not len(foot):
+        return np.zeros(len(foot))
+    p0 = scene.to_world(foot)
+    jx = scene.to_world(foot + np.array([1.0, 0.0])) - p0
+    jy = scene.to_world(foot + np.array([0.0, 1.0])) - p0
+    jac = np.stack([jx, jy], axis=2)
+    return np.linalg.svd(jac, compute_uv=False)[:, 0] * (float(size[0]) / 3840.0)
+
+
+def _extents(
+    rows: pd.DataFrame, scene: Scene, direction: np.ndarray, dims: dict[str, list[float]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Front and rear ground points (N, 2), length and width (N,) of each row along `direction`.
+
+    The footprint (bottom centre of the box) is the ground point nearest the camera: a vehicle's front
+    bumper when it drives toward the camera, its rear when it drives away, the middle of its side when it
+    crosses the view. Rows without a direction (NaN) get front = rear = footprint.
+    """
+    cls = rows["cls"].astype(str).to_numpy()
+    size = np.array([dims.get(c, [0.5, 0.5]) for c in cls], dtype=np.float64)
+    length, width = size[:, 0], size[:, 1]
+    pos = rows[["X", "Y"]].to_numpy(dtype=np.float64)
+    front, rear = pos.copy(), pos.copy()
+    ok = np.isfinite(direction).all(axis=1)
+    if ok.any():
+        foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)[ok]
+        ahead = scene.to_image(pos[ok] + direction[ok]) - foot
+        down = ahead[:, 1] / np.maximum(np.hypot(ahead[:, 0], ahead[:, 1]), 1e-9)
+        lead = np.where(down > 0.3, 0.0, np.where(down < -0.3, 1.0, 0.5))  # footprint -> front, in lengths
+        front[ok] = pos[ok] + (lead * length[ok])[:, None] * direction[ok]
+        rear[ok] = front[ok] - length[ok][:, None] * direction[ok]
+    return front, rear, length, width
+
+
+def conflicts(rows: pd.DataFrame, scene: Scene, cfg: dict[str, Any]) -> pd.DataFrame:
+    """Road users that a moving vehicle would hit unless its driver brakes harder than everyday driving.
+
+    For every mover `a` (a vehicle or two-wheeler at >= min_mover_speed_mps) and every other road user
+    `b` (SPEC §12.47):
+    - `b` is entirely ahead of a's front bumper (boxes that already overlap are occlusion or measurement
+      error, or a crash already happening, never a warning) and in its path. Traffic moving along a's
+      line (within parallel_max_deg, either way) or standing still must overlap it laterally now (the
+      two half-widths): a car overtaking a bus in the next lane is no conflict, and a tall vehicle's
+      footprint sits off its true centre line. Crossing traffic counts within the half-widths plus
+      `path_margin_m`, a pedestrian plus `path_margin_person_m`, now, when `a` gets there, or crossing
+      the path in between;
+    - `gap` is bumper to bumper along a's direction (class lengths from kinematics.vehicle_dims_m),
+      `closing` the relative speed along it, `ttc = gap / closing`, and `drac = closing^2 / (2 gap)`,
+      the deceleration a needs to stop short;
+    - kept only if drac >= drac_min_mps2 (drac_min_person_mps2 for a pedestrian), i.e. only if stopping
+      short takes emergency braking: drivers here stop behind the queue at 3-5 m/s^2, whatever the
+      (lagging) acceleration estimate says; closing >= min_conflict_closing_mps and
+      ttc <= max_conflict_ttc_sec;
+    - both tracks at least min_track_age_sec old, with a velocity, in the reliably measured part of the
+      frame (ground_scale <= max_ground_m_per_px), and `b` not standing in a parking zone or bus stop.
+    Returns one row per conflict: track_a, track_b, cls_a, cls_b, gap, closing, ttc, drac, sorted by ttc.
+    """
+    columns = ["track_a", "track_b", "cls_a", "cls_b", "gap", "closing", "ttc", "drac"]
+    if len(rows) < 2:
+        return pd.DataFrame({c: [] for c in columns})
+    groups = cfg["groups"]
+    dims = cfg.get("vehicle_dims") or load_thresholds()["kinematics"]["vehicle_dims_m"]
+    cls = rows["cls"].astype(str).to_numpy()
+    tid = rows["track_id"].to_numpy()
+    person = np.isin(cls, groups["persons"])
+    vehicle = np.isin(cls, groups["movers"])
+    pos = rows[["X", "Y"]].to_numpy(dtype=np.float64)
+    vel = rows[["vx", "vy"]].to_numpy(dtype=np.float64)
+    speed = np.hypot(vel[:, 0], vel[:, 1])
+    known = np.isfinite(speed)
+    foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
+    age = rows["age"].to_numpy(dtype=np.float64) if "age" in rows else np.full(len(rows), np.inf)
+    reliable = ground_scale(scene, foot) <= cfg["max_ground_m_per_px"]
+    plausible = speed <= cfg["max_plausible_speed_mps"]  # faster = the tracker jumped between vehicles
+    usable = known & plausible & (age >= cfg["min_track_age_sec"]) & reliable
+    in_bay = scene.point_in("parking_zones", foot) | scene.point_in("bus_stops", foot)
+    parked = known & (speed < 0.5) & in_bay
+    with np.errstate(invalid="ignore", divide="ignore"):
+        direction = np.where((known & (speed >= 1.0))[:, None], vel / speed[:, None], np.nan)
+    front, rear, _, width = _extents(rows, scene, direction, dims)
+
+    mover = usable & vehicle & (speed >= cfg["min_mover_speed_mps"])
+    i, j = np.nonzero(mover[:, None] & (usable & ~parked & (vehicle | person))[None, :])
+    keep = i != j
+    i, j = i[keep], j[keep]
+    if not len(i):
+        return pd.DataFrame({c: [] for c in columns})
+    u = direction[i]
+    n = np.stack([-u[:, 1], u[:, 0]], axis=1)
+    ends_known = np.isfinite(direction[j]).all(axis=1)
+    # A standing vehicle in a mover's way is almost always queued along the same line: give it its
+    # length along a's direction (a point would put its rear half a car length too far away).
+    front_j, rear_j = front[j].copy(), rear[j].copy()
+    standing = ~ends_known & vehicle[j]
+    if standing.any():
+        k = np.flatnonzero(standing)
+        sub = rows.iloc[j[k]]
+        f, r, _, _ = _extents(sub, scene, u[k], dims)
+        front_j[k], rear_j[k] = f, r
+    s1 = ((front_j - front[i]) * u).sum(axis=1)
+    s2 = ((rear_j - front[i]) * u).sum(axis=1)
+    near = np.minimum(s1, s2)
+    centre_j = np.where((ends_known | standing)[:, None], (front_j + rear_j) / 2, pos[j])
+    lat = ((centre_j - (front[i] + rear[i]) / 2) * n).sum(axis=1)
+    rel = vel[j] - vel[i]
+    closing = -(rel * u).sum(axis=1)
+    gap = np.maximum(near, cfg["min_gap_m"])  # near > 0 is required below; this only bounds the division
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ttc = gap / closing
+        drac = closing**2 / (2 * gap)
+    lat_then = lat + (rel * n).sum(axis=1) * np.where(np.isfinite(ttc), ttc, 0.0)
+    # Traffic moving along a's line (same or opposite way) or standing still must really overlap it now:
+    # a car overtaking a bus in the next lane is no conflict, and a tall bus's footprint sits off its
+    # true centre line. Crossing traffic and pedestrians count if they are in the path now, when a
+    # arrives, or cross it in between.
+    cos_ab = np.abs((u * np.nan_to_num(direction[j])).sum(axis=1))
+    along_line = ~ends_known | (cos_ab >= math.cos(math.radians(cfg["parallel_max_deg"])))
+    both_half = width[i] / 2 + width[j] / 2
+    margin = np.where(person[j], cfg["path_margin_person_m"], cfg["path_margin_m"])
+    half = np.where(along_line & ~person[j], both_half, both_half + margin)
+    crossing = (np.abs(lat_then) < half) | (np.sign(lat) != np.sign(lat_then))
+    in_path = (np.abs(lat) < half) | (~(along_line & ~person[j]) & crossing)
+    drac_min = np.where(person[j], cfg["drac_min_person_mps2"], cfg["drac_min_mps2"])
+    ok = (
+        (near > 0)
+        & in_path
+        & (closing >= cfg["min_conflict_closing_mps"])
+        & (ttc <= cfg["max_conflict_ttc_sec"])
+        & (drac >= drac_min)
+    )
+    out = pd.DataFrame(
+        {
+            "track_a": tid[i][ok],
+            "track_b": tid[j][ok],
+            "cls_a": cls[i][ok],
+            "cls_b": cls[j][ok],
+            "gap": gap[ok],
+            "closing": closing[ok],
+            "ttc": ttc[ok],
+            "drac": drac[ok],
+        }
+    )
+    return out.sort_values(["ttc", "track_a", "track_b"], kind="stable").reset_index(drop=True)
+
+
 def risk_features(
-    rows: pd.DataFrame, scene: Scene, red_lanes: set[str], cfg: dict[str, Any]
+    rows: pd.DataFrame,
+    scene: Scene,
+    red_lanes: set[str],
+    cfg: dict[str, Any],
+    memory: dict[tuple[int, int], list[tuple[float, float]]] | None = None,
+    t: float = 0.0,
 ) -> dict[str, float]:
-    """SPEC §8 features of one frame (with the §12.40 gates).
+    """SPEC §8 features of one frame (gates: SPEC §12.40, conflicts and measurement limits: §12.47).
 
     `rows`: track_id, cls, X, Y, vx, vy, ax, ay (metres; NaN while a track has no velocity yet), fx, fy
     (px), and optionally `age` (seconds since the track appeared) and `last_lane` (the last lane it was
-    seen in). Gates that keep normal traffic calm:
-    - a pair counts only if its paths meet (features.pair_features), one of them moves at
-      >= min_mover_speed_mps and both tracks are >= min_track_age_sec old (fresh tracks have no
-      trustworthy velocity);
-    - deceleration counts only above decel_floor_mps2: everyday braking is not a warning sign;
-    - red_light = a moving vehicle past the stop line (in the intersection) that came from a lane whose
+    seen in).
+    - ttc_min / closing_speed: the most urgent vehicle conflict (`conflicts`); ped_ttc: the most urgent
+      one with a pedestrian on the carriageway. With `memory` (RiskCore keeps one per video, `t` is the
+      frame time) a conflict counts only once the same pair has been in conflict for
+      conflict_persist_frames processed frames in a row AND its bumper gap really shrank over them at
+      >= conflict_gap_consistency x the measured closing speed. One noisy frame is not a warning, and
+      neither is a gap that stays put while the speeds say it should vanish (a tall bus or truck whose
+      footprint sits off its true lane, two boxes merged by occlusion);
+    - decel_max: the hardest braking above decel_floor_mps2 (everyday braking is not a warning sign),
+      from tracks at least decel_min_age_sec old in the reliably measured part of the frame; values over
+      decel_cap_mps2 are measurement artefacts (a new or re-emerging box), not braking, and are ignored;
+    - wrong_way: a moving vehicle against its lane's direction;
+    - red_light: a moving vehicle past the stop line (in the intersection) that came from a lane whose
       signal is red. A car queueing or approaching inside its lane is legal.
     """
     groups = cfg["groups"]
@@ -157,39 +320,45 @@ def risk_features(
     vel = rows[["vx", "vy"]].to_numpy(dtype=np.float64)
     speed = np.hypot(vel[:, 0], vel[:, 1])
     known = np.isfinite(speed)
+    foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
+    reliable = ground_scale(scene, foot) <= cfg["max_ground_m_per_px"]
+    age = rows["age"].to_numpy(dtype=np.float64) if "age" in rows else np.full(len(rows), np.inf)
     acc = np.nan_to_num(rows[["ax", "ay"]].to_numpy(dtype=np.float64))
     with np.errstate(invalid="ignore", divide="ignore"):
-        along = np.where(known & (speed > 0.5), (acc * vel).sum(axis=1) / speed, 0.0)
-    if (movers & known).any():
-        feats["decel_max"] = float(max(0.0, -along[movers & known].min() - cfg["decel_floor_mps2"]))
+        decel = np.where(known & (speed > 0.5), -(acc * vel).sum(axis=1) / speed, 0.0)
+    braking = movers & known & reliable & (age >= cfg["decel_min_age_sec"]) & (decel <= cfg["decel_cap_mps2"])
+    if braking.any():
+        feats["decel_max"] = float(max(0.0, decel[braking].max() - cfg["decel_floor_mps2"]))
 
-    pairs = pair_features(rows)
-    if len(pairs):
-        tid = rows["track_id"].to_numpy()
-        age = rows["age"].to_numpy(dtype=np.float64) if "age" in rows else np.full(len(rows), np.inf)
-        mature = set(tid[age >= cfg["min_track_age_sec"]])
-        moving = set(tid[movers & known & (speed >= cfg["min_mover_speed_mps"])])
-        ok = (
-            pairs["track_a"].isin(mature)
-            & pairs["track_b"].isin(mature)
-            & (pairs["track_a"].isin(moving) | pairs["track_b"].isin(moving))
-        )
-        pairs = pairs[ok]
-        involve = pairs["cls_a"].isin(groups["movers"]) | pairs["cls_b"].isin(groups["movers"])
-        person = pairs["cls_a"].isin(groups["persons"]) | pairs["cls_b"].isin(groups["persons"])
-        road_ids = set(tid[scene.point_in("carriageway", rows[["fx", "fy"]].to_numpy())])
-        on_road = pairs["track_a"].isin(road_ids) & pairs["track_b"].isin(road_ids)
-        vv = pairs[involve & ~person]
+    found = conflicts(rows, scene, cfg)
+    if memory is not None:
+        n = cfg["conflict_persist_frames"]
+        keys = list(zip(found["track_a"].astype(int), found["track_b"].astype(int), strict=True))
+        seen = {
+            k: (memory.get(k, []) + [(t, float(g))])[-n:] for k, g in zip(keys, found["gap"], strict=True)
+        }
+        memory.clear()
+        memory.update(seen)
+        confirmed = []
+        for k, closing in zip(keys, found["closing"], strict=True):
+            hist = seen[k]
+            span = hist[-1][0] - hist[0][0]
+            shrink = (hist[0][1] - hist[-1][1]) / span if span > 0 else 0.0
+            confirmed.append(len(hist) >= n and shrink >= cfg["conflict_gap_consistency"] * closing)
+        found = found[confirmed]
+    if len(found):
+        ped = found["cls_b"].isin(groups["persons"]).to_numpy()
+        vv = found[~ped]
         if len(vv):
             feats["ttc_min"] = float(vv["ttc"].iloc[0])
-            feats["closing_speed"] = float(vv["closing_speed"].iloc[0])
-        vp = pairs[involve & person & on_road]
+            feats["closing_speed"] = float(vv["closing"].iloc[0])
+        road_ids = set(rows["track_id"].to_numpy()[scene.point_in("carriageway", foot)])
+        vp = found[ped & found["track_b"].isin(road_ids).to_numpy()]
         if len(vp):
             feats["ped_ttc"] = float(vp["ttc"].min())
 
-    fast = movers & known & (speed > cfg["wrong_way_speed_mps"])
+    fast = movers & known & reliable & (speed > cfg["wrong_way_speed_mps"])
     if scene.has("lanes") and fast.any():
-        foot = rows[["fx", "fy"]].to_numpy(dtype=np.float64)
         lanes = scene.lane_of(foot).astype(str)
         lane_dir = lane_world_dirs(rows.assign(lane_id=lanes), scene)
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -241,6 +410,7 @@ class RiskCore:
         }
         self.cfg["wrong_way_speed_mps"] = cfg["classes"]["wrong_way"]["params"]["min_speed_mps"]
         self.cfg["wrong_way_max_cos"] = cfg["classes"]["wrong_way"]["params"]["max_cos_to_lane"]
+        self.cfg["vehicle_dims"] = cfg["kinematics"]["vehicle_dims_m"]
         self.names = {int(k): v for k, v in cfg["perception"]["keep_classes"].items()}
         self.meta = dict(meta)
         self.fps = float(meta.get("fps") or 25.0)
@@ -272,6 +442,7 @@ class RiskCore:
         self.detector = self._detector or Detector.load()
         self.tracker = OnlineTracker(self.fps / self.cfg["stride"])
         self.kin = OnlineKinematics(self.cfg)
+        self.conflict_memory: dict[tuple[int, int], list[tuple[float, float]]] = {}
         self.edge_margin = cfg["kinematics"]["edge_margin_frac"]
         self.signals = SignalStateEstimator(self.scene) if self.scene.has("signals") else None
         self.signal_of = {
@@ -323,6 +494,7 @@ class RiskCore:
         """
         self.scene = scene
         self.kin = OnlineKinematics(self.cfg)
+        self.conflict_memory = {}
         if self.signals is not None:
             self.signals = SignalStateEstimator(scene)
 
@@ -338,6 +510,13 @@ class RiskCore:
         if self.signals is not None:
             states = self.signals.update(frame, t_sec)
             red_lanes = {lane for lane, sid in self.signal_of.items() if states.get(sid) == "red"}
+        return self.score_tracks(tracks, t_sec, red_lanes)
+
+    def score_tracks(self, tracks: FrameTracks, t_sec: float, red_lanes: set[str]) -> float:
+        """Score one processed frame from its tracks: features -> sigmoid -> EMA -> hold.
+
+        The perception-free half of step(), also used by scripts/risk_replay.py to replay track caches.
+        """
         raw = risk_score(self._features(tracks, t_sec, red_lanes), self.cfg)
         a = self.cfg["ema_alpha"]
         self.ema = raw if self.ema is None else a * raw + (1 - a) * self.ema
@@ -381,4 +560,4 @@ class RiskCore:
                 "last_lane": last_lane,
             }
         )
-        return risk_features(rows, self.scene, red_lanes, self.cfg)
+        return risk_features(rows, self.scene, red_lanes, self.cfg, self.conflict_memory, t)

@@ -41,6 +41,7 @@ def cfg() -> dict:
     groups = load_thresholds()["perception"]["tracker_groups"]
     c["groups"] = {"movers": groups["vehicles"] + groups["two_wheelers"], "persons": groups["persons"]}
     c["wrong_way_speed_mps"], c["wrong_way_max_cos"] = 2.0, -0.5
+    c["vehicle_dims"] = load_thresholds()["kinematics"]["vehicle_dims_m"]
     return c
 
 
@@ -69,16 +70,24 @@ def rows(*objs: tuple) -> pd.DataFrame:
 
 def test_features() -> None:
     c = cfg()
+    # Head-on at 8 m/s each, footprints 20 m apart. Moving across the view, a car's footprint is the
+    # middle of its side, so the bumpers are 20 - 4.6 = 15.4 m apart: TTC 15.4 / 16, and stopping short
+    # needs 16^2 / (2 * 15.4) = 8.3 m/s^2 of braking, far beyond everyday driving.
     head_on = risk_features(
+        rows((1, "car", 10, 45, 8, 0, 0, 0), (2, "car", 30, 45.5, -8, 0, 0, 0)), SCENE, set(), c
+    )
+    assert head_on["ttc_min"] == pytest.approx(15.4 / 16, abs=0.01)
+    assert head_on["closing_speed"] == pytest.approx(16.0, abs=0.1)
+    # The same encounter at 5 m/s each needs only 3.2 m/s^2 to stop: an ordinary stop, no conflict.
+    slow = risk_features(
         rows((1, "car", 10, 45, 5, 0, 0, 0), (2, "car", 30, 45.5, -5, 0, 0, 0)), SCENE, set(), c
     )
-    assert head_on["ttc_min"] == pytest.approx(2.0, abs=0.01) and head_on["closing_speed"] == pytest.approx(
-        10.0, abs=0.1
-    )
+    assert math.isinf(slow["ttc_min"])
+    # A standing pedestrian (a point) 12 m ahead of a car at 10 m/s: gap 12 - 2.3 = 9.7 m, 5.2 m/s^2.
     ped = risk_features(
-        rows((1, "car", 10, 45, 8, 0, 0, 0), (2, "person", 26, 45, 0, 0, 0, 0)), SCENE, set(), c
+        rows((1, "car", 10, 45, 10, 0, 0, 0), (2, "person", 22, 45, 0, 0, 0, 0)), SCENE, set(), c
     )
-    assert ped["ped_ttc"] == pytest.approx(2.0) and math.isinf(ped["ttc_min"])
+    assert ped["ped_ttc"] == pytest.approx(0.97, abs=0.01) and math.isinf(ped["ttc_min"])
     wrong = risk_features(rows((1, "car", 50, 45, -8, 0, 0, 0)), SCENE, set(), c)
     assert wrong["wrong_way"] == 1.0 and wrong["red_light"] == 0.0
     hard = risk_features(rows((1, "car", 50, 45, 8, 0, -7, 0)), SCENE, {"e1"}, c)
@@ -265,12 +274,14 @@ def test_a_stationary_queue_with_detector_jitter_raises_no_alarm() -> None:
 
 
 def test_a_normal_stop_behind_a_stopped_car_raises_no_alarm() -> None:
-    # 12 m/s, braking at 3 m/s^2 from 2 s on, stopping 2 m behind a car standing at x = 60 m.
+    # 12 m/s, braking at 3 m/s^2 from 2 s on, stopping 2 m (bumper to bumper) behind a 4.6 m car standing
+    # at x = 64.6 m. (Before SPEC §12.47 this test stopped the footprints 2 m apart, which with real car
+    # lengths is 2.6 m of overlap: a crash.)
     def follower(t: float) -> float:
         brake = min(max(t - 2.0, 0.0), 4.0)
         return 10 + 12 * min(t, 2.0) + 12 * brake - 1.5 * brake**2
 
-    scores = run(jittered(lambda t: [(follower(t), 45, 2), (60, 45, 2)], 0.05), 8)
+    scores = run(jittered(lambda t: [(follower(t), 45, 2), (64.6, 45, 2)], 0.05), 8)
     assert max(s for _, s in scores) < 0.5
 
 
@@ -350,3 +361,91 @@ def test_a_scene_clicked_at_another_resolution_is_scaled_to_the_frames() -> None
     head_on = lambda t: [(20 + 10 * t, 45, 2), (80 - 10 * t, 45.5, 2)]  # noqa: E731
     at_2x = NO_LANES.transformed(np.diag([2.0, 2.0, 1.0]), (2000, 2000))
     assert run(head_on, 2.9, scene=at_2x) == run(head_on, 2.9)
+
+
+# ------------------------------------------------ real traffic replayed from the track caches (SPEC §12.47)
+# Before §12.47 Part B raised 31 alarms in 7.4 min of accident-free C3902 + C3905 traffic
+# (scripts/risk_replay.py). Each test below is one of those patterns rebuilt synthetically; the crash
+# tests above and below must keep alarming early.
+
+
+def test_a_rear_end_into_a_standing_queue_alarms_early() -> None:
+    # 14 m/s, no braking, into a car standing at x = 64.6 m (contact when the gap closes, t ~ 2.4 s).
+    scores = run(lambda t: [(30 + 14 * t, 45, 2), (64.6, 45, 2)], 2.3)
+    assert max(s for t, s in scores if t < 1.0) < 0.1
+    assert max(s for t, s in scores if t >= 1.4) >= 0.5  # at least ~1 s before contact
+
+
+def test_arriving_at_the_queue_with_ordinary_braking_stays_calm() -> None:
+    # C3902 0:01: 8.3 m/s, 10.8 m bumper gap to a stopped car, braking at 3.2 m/s^2, the acceleration
+    # estimate lagging behind: needs 3.2 m/s^2 to stop, which drivers here do at every red.
+    def follower(t: float) -> float:
+        v = max(8.3 - 3.2 * t, 0.0)
+        return 40 + (8.3**2 - v**2) / (2 * 3.2)
+
+    scores = run(jittered(lambda t: [(follower(t), 45, 2), (40 + 4.6 + 10.8 + 4.6, 45, 2)], 0.05), 5)
+    assert max(s for _, s in scores) < 0.2
+
+
+def test_overtaking_a_bus_in_the_next_lane_stays_calm() -> None:
+    # C3902 0:51: a car at 16 m/s passing a bus at 8 m/s, 3.4 m to the side (one lane): no conflict,
+    # though the car closes on the bus fast and its footprint drifts 1 m toward the bus's.
+    def boxes(t: float):
+        drift = 0.5 * math.sin(3 * t)  # the tall bus's footprint wobbles across its lane
+        return [(20 + 16 * t, 45.0, 2), (40 + 8 * t, 48.4 - 1.0 + drift, 5)]
+
+    scores = run(boxes, 4)
+    assert max(s for _, s in scores) < 0.2
+
+
+def test_a_car_parked_in_a_parking_zone_is_not_an_obstacle() -> None:
+    # C3902 0:01: a bus drives past (and pulls in behind) a car parked in the kerb lane.
+    parking = Scene({**NO_LANES.layers, "parking_zones": [[[500, 400], [900, 400], [900, 480], [500, 480]]]})
+    scores = run(lambda t: [(20 + 7 * t, 44, 5), (70, 44, 2)], 5, scene=parking)
+    assert max(s for _, s in scores) < 0.1
+    # the same standing car in a traffic lane is an obstacle: driving into it at 10 m/s alarms
+    assert max(s for _, s in run(lambda t: [(20 + 10 * t, 44, 2), (70, 44, 2)], 4.4)) >= 0.5
+
+
+def test_a_pedestrian_beside_a_car_is_not_in_its_path_but_one_stepping_in_is() -> None:
+    # C3902 2:55: walking beside a moving car (1.5 m from its centre line) is not a conflict ...
+    beside = run(lambda t: [(20 + 9 * t, 45, 2), (40 + 1.4 * t, 46.5, 0)], 3)
+    assert max(s for _, s in beside) < 0.2
+    # ... stepping into its path 15 m ahead of it is
+    stepping = run(lambda t: [(20 + 9 * t, 45, 2), (41, 48 - 1.4 * t, 0)], 2.0)
+    assert max(s for _, s in stepping) >= 0.5
+
+
+def test_far_from_the_camera_jitter_is_not_measured() -> None:
+    # C3902 4:13: the far end of an approach, where one 4K pixel is 10-24 cm of road. There two queued
+    # cars and a car approaching at 12 m/s look like a collision course; they are not measured at all.
+    far = Scene({**NO_LANES.layers, "image_size": [3840, 2160]})  # PX = 10 px/m -> 0.1 m per 4K pixel
+    scores = run(jittered(lambda t: [(20 + 12 * t, 45, 2), (60, 45, 2)], 0.8), 2.5, scene=far)
+    assert max(s for _, s in scores) < 0.1
+
+
+def test_braking_is_read_only_where_it_can_be_measured() -> None:
+    c = cfg()
+    base = rows((1, "car", 50, 45, 8, 0, -7, 0)).assign(age=3.0)
+    assert risk_features(base, SCENE, set(), c)["decel_max"] == pytest.approx(7.0 - c["decel_floor_mps2"])
+    young = base.assign(age=0.8)  # a new box's first fits are noise
+    assert risk_features(young, SCENE, set(), c)["decel_max"] == 0.0
+    impossible = base.assign(ax=-30.0)  # no tyre brakes at 30 m/s^2: a re-emerging box, not braking
+    assert risk_features(impossible, SCENE, set(), c)["decel_max"] == 0.0
+
+
+def test_a_gap_that_does_not_shrink_is_not_a_conflict() -> None:
+    # C3905 1:06: a car beside a turning truck. The measured speeds say it closes at 6.5 m/s, but the
+    # measured gap stays 1 m: two merged boxes or a biased footprint, not an approach.
+    c = cfg()
+    memory: dict = {}
+    frame = rows((1, "car", 20, 45, 9.9, 0, 0, 0), (2, "truck", 31.6, 45, 3.4, 0, 0, 0))
+    for k in range(6):
+        feats = risk_features(frame, SCENE, set(), c, memory, t=k / 10)
+    assert math.isinf(feats["ttc_min"])
+    # the same pair really closing (gap shrinking at the closing speed) is confirmed after 3 frames
+    memory = {}
+    for k in range(6):
+        moving = frame.assign(X=[20 + 6.5 * k / 10, 31.6])
+        feats = risk_features(moving, SCENE, set(), c, memory, t=k / 10)
+    assert math.isfinite(feats["ttc_min"])
