@@ -104,10 +104,11 @@ def test_gentle_stop_or_contact_is_not_a_near_miss() -> None:
 
 
 def test_a_firm_but_planned_stop_is_not_a_near_miss() -> None:
-    # 12 m/s, braking at 4.5 m/s^2 from 1.7 s before reaching the stopped car, stopping 4 m short: firm,
-    # but begun while the car ahead was > 1.5 s away. Its TTC falls below 1.5 s during the stop and the
-    # deceleration passes 4 m/s^2, which used to be enough; imminence is now judged at the reaction.
-    firm = emergency_brake(4.5, x_start=100 - 12 * 1.7 - 12 * 1.92, t_brake=1.92)
+    # 12 m/s, braking at 4.5 m/s^2 and stopping 4 m short of the stopped car, bumper to bumper (8.5 m
+    # between the centres of the 4.5 m cars): firm, but planned. The deceleration passes 4 m/s^2 and the
+    # centre-to-centre TTC falls below 1.5 s, which used to be enough; the stop never needs more than
+    # 3.6 m/s^2 to end short, so it is no conflict (risk.drac_min_mps2 = 5, SPEC §12.57).
+    firm = emergency_brake(4.5, x_start=100 - 8.5 - 12**2 / 9 - 12 * 1.92, t_brake=1.92)
     assert near_miss.detect(firm, SCENE, ctx(10), cfg("near_miss")) == []
 
 
@@ -122,6 +123,16 @@ def test_turning_past_a_waiting_pedestrian_is_not_a_near_miss() -> None:
     car = track(1, f, cx + radius * np.cos(ang), cy + radius * np.sin(ang))
     walker = track(2, f, cx + 15.0 * np.cos(0.4), cy + 15.0 * np.sin(0.4), cls="person", w_px=8, h_px=17)
     assert near_miss.detect(kin(car, walker), SCENE, ctx(8), cfg("near_miss")) == []
+
+
+def test_passing_alongside_a_long_bus_is_not_a_near_miss() -> None:
+    """C3902 0:55: a car at 16 m/s overtook an articulated bus at 7.6 m/s in the next lane. Their long
+    boxes overlap across the lanes, so Part B read a conflict, but nobody braked (SPEC §12.57)."""
+    f = frames(0, 8)
+    t = f / FPS
+    car = track(1, f, 40 + 16 * t, 44)
+    bus = track(2, f, 60 + 7.6 * t, 47, cls="bus", w_px=180, h_px=40)
+    assert near_miss.detect(kin(car, bus), SCENE, ctx(8), cfg("near_miss")) == []
 
 
 # ---------------------------------------------------------------------------------------- road_obstacle

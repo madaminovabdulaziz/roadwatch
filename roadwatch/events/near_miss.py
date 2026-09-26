@@ -1,28 +1,30 @@
 """near_miss: Sharp braking or swerving to avoid a collision, with no contact.
 
-Trigger: a pair on a collision course (their paths meet: closest point of approach under the
-collision radius, features.pair_features) with closing speed > min_closing_speed_mps and a
-constant-velocity TTC < max_ttc_sec at the moment one of them reacts with evasive action
-(deceleration > evasive_decel_mps2 or yaw rate > evasive_yaw_rate_dps); separation stays >
-min_separation_m and no accident follows within no_accident_within_sec (SPEC §12.39).
+Trigger: a conflict in Part B's sense (risk.conflicts, SPEC §12.47: a road user ahead of a mover's front
+bumper and in its path, bumper-to-bumper TTC <= risk.max_conflict_ttc_sec and a deceleration needed to
+stop short >= risk.drac_min_mps2, judged only where the camera resolves metres) that persists for
+risk.conflict_persist_frames processed frames, and the mover reacting within evasive_window_sec with
+evasive action: deceleration above evasive_decel_mps2 (read only from a track older than
+risk.decel_min_age_sec, and at most risk.decel_cap_mps2: more is a tracker jump) or a yaw rate above
+evasive_yaw_rate_dps. Separation stays > min_separation_m and no accident follows within
+no_accident_within_sec (SPEC §12.39, §12.57).
 Start: onset of evasive action (deceleration first > onset_decel_mps2).
 End: separation increasing and TTC > end_ttc_sec.
 
 Details:
-- Pairs involve at least one vehicle or two-wheeler; TTC and closing speed come from
-  features.pair_features on each processed frame. A near miss is a collision the reaction prevented,
-  so imminence is judged by the constant-velocity TTC (`ttc_cv`), and judged at the reaction: the
-  first sample past the evasive threshold (on smoothed kinematics this tracks the true TTC at the
-  start of braking within ~0.15 s). A planned stop, begun while the obstacle was still > 1.5 s away,
-  is not a near miss even though its TTC shrinks during the stop.
-- Evasive action is searched on either moving object within evasive_window_sec of the first trigger.
-  Its onset (the start) walks back from the first evasive sample while the deceleration stays above
-  onset_decel_mps2; a pure swerve starts at its first evasive sample.
+- The old trigger, a collision course between box centres (features.pair_features), fired on queues
+  closing up, side-by-side lanes and far-away box jitter: 23 false near misses in 7.4 min of the dev
+  videos. risk.conflicts is the test Part B uses, which took Part B from 31 false alarms to 2; a near miss
+  additionally needs the mover's evasive reaction, which neither of those 2 (a car passing alongside a
+  long bus or truck) shows.
+- Evasive action is searched on the mover within evasive_window_sec of the conflict. Its onset (the
+  start) walks back from the first evasive sample while the deceleration stays above onset_decel_mps2;
+  a pure swerve starts at its first evasive sample.
 - "No accident within": the pair's minimum separation over the episode and the following
   no_accident_within_sec must stay above min_separation_m.
 Score = min(1, 0.5 + 0.5 * (max_ttc_sec - min TTC) / max_ttc_sec): the closer the call, the surer.
 
-Thresholds: configs/thresholds.yaml -> classes.near_miss.params (SPEC §5).
+Thresholds: configs/thresholds.yaml -> classes.near_miss.params (SPEC §5) and risk (the conflict test).
 """
 
 from __future__ import annotations
@@ -32,9 +34,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from roadwatch.config import load_thresholds
 from roadwatch.events.base import VideoContext
 from roadwatch.events.common import group_members, max_gap
-from roadwatch.features import pair_features
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -42,26 +44,45 @@ LABEL = "near_miss"
 REQUIRED_LAYERS: tuple[str, ...] = ("homography",)
 
 
-def triggers(tt: pd.DataFrame, p: dict[str, Any]) -> dict[tuple[int, int], tuple[float, float]]:
-    """First trigger time and the minimum TTC of every pair that meets the TTC trigger."""
-    movers = group_members("vehicles", "two_wheelers")
-    road = movers | group_members("persons")
+def conflict_cfg() -> dict[str, Any]:
+    """Part B's conflict settings (risk.*) with the class groups and vehicle sizes risk.conflicts needs."""
+    th = load_thresholds()
+    groups = th["perception"]["tracker_groups"]
+    return dict(th["risk"]) | {
+        "groups": {"movers": groups["vehicles"] + groups["two_wheelers"], "persons": groups["persons"]},
+        "vehicle_dims": th["kinematics"]["vehicle_dims_m"],
+    }
+
+
+def triggers(
+    tt: pd.DataFrame, scene: Scene, rcfg: dict[str, Any]
+) -> dict[tuple[int, int], tuple[float, float]]:
+    """(first time, minimum TTC) of every (mover, other) pair in a conflict that persists for
+    conflict_persist_frames consecutive processed frames."""
+    from roadwatch.risk import conflicts  # the Part B module; imported here to keep rule imports light
+
+    road = group_members("vehicles", "two_wheelers", "persons")
     rows = tt[tt["cls"].astype(str).isin(road)]
+    need = max(1, int(rcfg["conflict_persist_frames"]))
+    streak: dict[
+        tuple[int, int], tuple[int, float, float]
+    ] = {}  # pair -> (frames in a row, first t, min ttc)
     out: dict[tuple[int, int], tuple[float, float]] = {}
     for _, f in rows.groupby("frame", sort=True):
-        if len(f) < 2:
-            continue
-        pairs = pair_features(f)
-        hot = pairs[
-            (pairs["ttc_cv"] < p["max_ttc_sec"])
-            & (pairs["closing_speed"] > p["min_closing_speed_mps"])
-            & (pairs["cls_a"].isin(movers) | pairs["cls_b"].isin(movers))
-        ]
         t = float(f["t"].iloc[0])
+        hot = (
+            conflicts(f, scene, rcfg) if len(f) >= 2 else pd.DataFrame(columns=["track_a", "track_b", "ttc"])
+        )
+        now = {}
         for r in hot.itertuples():
-            key = (int(min(r.track_a, r.track_b)), int(max(r.track_a, r.track_b)))
-            first, best = out.get(key, (t, np.inf))
-            out[key] = (first, min(best, float(r.ttc_cv)))
+            key = (int(r.track_a), int(r.track_b))
+            count, first, best = streak.get(key, (0, t, np.inf))
+            now[key] = (count + 1, first, min(best, float(r.ttc)))
+            if now[key][0] >= need and key not in out:
+                out[key] = (first, now[key][2])
+            elif key in out:
+                out[key] = (out[key][0], min(out[key][1], float(r.ttc)))
+        streak = now
     return out
 
 
@@ -77,7 +98,11 @@ def evasive_action(
     decel = -rows["accel"].to_numpy(dtype=np.float64)
     yaw = np.abs(rows["yaw_rate"].to_numpy(dtype=np.float64))
     window = (t >= t0 - p["evasive_window_sec"]) & (t <= t0 + p["evasive_window_sec"])
-    hits = np.flatnonzero(window & ((decel > p["evasive_decel_mps2"]) | (yaw > p["evasive_yaw_rate_dps"])))
+    # braking is read only once the track has settled (a new box's first footprints race ahead and stop
+    # dead), and never above the cap (a tracker jump between vehicles), as in Part B
+    settled = t - t[0] >= p["decel_min_age_sec"]
+    braking = settled & (decel > p["evasive_decel_mps2"]) & (decel <= p["decel_cap_mps2"])
+    hits = np.flatnonzero(window & (braking | (yaw > p["evasive_yaw_rate_dps"])))
     if not len(hits):
         return None
     k = int(hits[0])
@@ -104,30 +129,23 @@ def pair_series(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
 def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any]) -> list[Segment]:
     if tt.empty:
         return []
-    p = cfg["params"]
+    rcfg = conflict_cfg()
+    p = cfg["params"] | {k: rcfg[k] for k in ("decel_min_age_sec", "decel_cap_mps2")}
     valid = tt[tt["kin_valid"].to_numpy()].sort_values(["track_id", "t"], kind="stable")
+    valid = valid.assign(age=valid["t"] - valid.groupby("track_id")["t"].transform("min"))
     tracks = {int(k): g for k, g in valid.groupby("track_id", sort=True)}
-    movers = group_members("vehicles", "two_wheelers")
     gap = max_gap(ctx)
     segments = []
-    for (a, b), (t0, ttc_min) in sorted(triggers(valid, p).items(), key=lambda kv: kv[1][0]):
-        actions = [
-            action
-            for tid in (a, b)
-            if str(tracks[tid]["cls"].iloc[0]) in movers
-            for action in [evasive_action(tracks[tid], t0, p, gap)]
-            if action is not None
-        ]
-        s = pair_series(tracks[a], tracks[b])
-        # imminent at the reaction: the constant-velocity TTC at the last joint sample up to it
-        actions = [
-            (onset, reaction)
-            for onset, reaction in actions
-            if (before := s[s["t"] <= reaction + 1e-9]).size and before["ttc"].iloc[-1] < p["max_ttc_sec"]
-        ]
-        if not actions:
+    done_pairs: set[tuple[int, int]] = set()
+    for (a, b), (t0, ttc_min) in sorted(triggers(valid, scene, rcfg).items(), key=lambda kv: kv[1][0]):
+        pair = (min(a, b), max(a, b))
+        if pair in done_pairs:
+            continue  # both directions of one pair can be in conflict; one near miss
+        action = evasive_action(tracks[a], t0, p, gap)  # the mover, who has to avoid the other
+        if action is None:
             continue
-        start = min(onset for onset, _ in actions)
+        s = pair_series(tracks[a], tracks[b])
+        start = action[0]
         after = s[s["t"] >= t0]
         closest = int(after["dist"].to_numpy().argmin())
         diverging = after.iloc[closest:]
@@ -137,5 +155,6 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
         if check.empty or check["dist"].min() <= p["min_separation_m"]:
             continue  # too close: contact, possibly an accident, not a near miss
         score = float(min(1.0, 0.5 + 0.5 * (p["max_ttc_sec"] - ttc_min) / p["max_ttc_sec"]))
-        segments.append(Segment(start, max(end, start), LABEL, score, (a, b)))
+        segments.append(Segment(start, max(end, start), LABEL, score, pair))
+        done_pairs.add(pair)
     return segments
