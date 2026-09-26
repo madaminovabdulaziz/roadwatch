@@ -26,10 +26,19 @@ ROADWATCH_OVERRIDES=demo/config.yaml ROADWATCH_DEVICE=cpu uvicorn demo.app:app -
 
 ## Deploy to a Hugging Face Space (human step)
 
-1. `bash weights/download.sh`, then `docker build -f demo/Dockerfile -t roadwatch-demo .` and
-   `docker run --rm -p 7860:7860 roadwatch-demo` to check it locally.
-2. Create a Space (SDK: Docker, CPU basic). Push `roadwatch/`, `configs/`, `demo/`, `weights/`,
-   `solution.py`, `evaluate.py`, plus `demo/Dockerfile` as the Space's root `Dockerfile` and a root
-   `README.md` whose front matter says `sdk: docker` and `app_port: 7860`.
-3. Set the website's `NEXT_PUBLIC_DEMO_API` to the Space URL, and point an uptime monitor at
+1. `bash weights/download.sh` (the detector's weights into `weights/`).
+2. Create a write token at https://huggingface.co/settings/tokens, then:
+   ```bash
+   HF_TOKEN=hf_... uv run --with huggingface_hub python demo/deploy_space.py --space <user>/roadwatch-demo
+   ```
+   It creates the Docker Space (CPU basic) if needed and uploads exactly what `demo/Dockerfile` needs,
+   with the Dockerfile at the Space's root. The Hub API stores the 81 MB weight file itself; a plain
+   `git push` to a Space rejects files over 10 MB without Git LFS. The Space builds for a few minutes;
+   `https://<user>-roadwatch-demo.hf.space/api/health` answers when it is up.
+3. Set the website's `NEXT_PUBLIC_DEMO_API` to that URL (no trailing slash), and point an uptime monitor at
    `/api/health` every 10 minutes so the Space does not sleep during judging.
+
+To check the image locally first, build it from the same files the Space gets:
+`python demo/deploy_space.py --stage /tmp/space && docker build -t roadwatch-demo /tmp/space`, then
+`docker run --rm -p 7860:7860 roadwatch-demo`. (Building from the repository root does not work: the
+root `.dockerignore` belongs to the submission image and leaves `demo/` out.)
