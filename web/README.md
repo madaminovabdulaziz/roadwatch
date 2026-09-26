@@ -32,6 +32,7 @@ after the final Kaggle run; the full-length renders take about 30 minutes on a l
 | `results/failures.json` + `results/failures/*.mp4` | `scripts/render_failures.py` | Results |
 | `dashboard/event_heat.jpg` | `scripts/event_heat.py` (the tracks behind each event, from the rules on the caches) | Dashboard |
 | `scene_overlay.jpg` | `scripts/render_scene.py --out web/public/data/scene_overlay.jpg` | Approach |
+| `hero/{hero-1080.mp4, hero-720.mp4, hero-poster.jpg}` | `bash scripts/hero_clip.sh` (raw 4K C3902, 13.5 s seamless loop) | Home |
 | `team.json` (+ photos in `team/`) | by hand | Team |
 | `report.json` | `scripts/write_report.py` (prose in the script, numbers from the files above) | Report |
 | `predictions_samples.json` | copy of the harness output | Links |
@@ -40,3 +41,28 @@ after the final Kaggle run; the full-length renders take about 30 minutes on a l
 "enabled_classes": [...], "runtime_x_duration": 1.7}`; paths are relative to `public/data/`. Events are
 `[[start, end, label], ...]` and risk `[[t, score], ...]`, the evaluate.py formats.
 Class colours: `configs/palette.json` (shared with `roadwatch/render.py`).
+
+## Team portraits and affiliations
+
+The homepage team section and `/team/` share `public/data/team.json`. A member without a photo shows
+their initial. Set `photo` to a transparent PNG path such as `team/member.png` (relative to
+`public/data/`); portraits use `object-fit: contain` on a dark backdrop to preserve the cutout. Logos
+render on white tiles in greyscale and take their own colours on hover.
+
+Each member can also include an optional `affiliations` array:
+
+```json
+{
+  "affiliations": [
+    {
+      "name": "University name",
+      "label": "Studies at",
+      "logo": "team/university-logo.png",
+      "url": "https://example.edu"
+    }
+  ]
+}
+```
+
+Use confirmed affiliations and supplied logos. Names, contributions, links, and affiliations remain
+visible without hovering. The hero respects reduced-motion preferences and includes playback control.

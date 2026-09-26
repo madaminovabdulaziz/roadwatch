@@ -8,7 +8,7 @@ export default function DemoPage() {
   return (
     <Page
       title="Live demo"
-      lead="Upload a short clip and get the annotated video, the event timeline and the risk curve. Processing runs on a CPU server, so a 2-minute clip takes a few minutes."
+      lead="From footage to findings. Upload a video or explore a prepared sample, then follow each event through annotated playback and synchronized analysis."
     >
       <UploadDemo />
     </Page>

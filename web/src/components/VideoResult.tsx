@@ -30,7 +30,7 @@ export default function VideoResult({
   }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="video-workspace">
       {src ? (
         <video
           ref={video}
@@ -39,17 +39,39 @@ export default function VideoResult({
           controls
           playsInline
           preload="metadata"
-          className="aspect-video w-full rounded-xl bg-black"
           onTimeUpdate={(e) => setNow(e.currentTarget.currentTime)}
         />
       ) : (
-        <div className="grid aspect-video w-full place-items-center rounded-xl bg-white/5 text-sm text-zinc-500">
-          Annotated video not available
-        </div>
+        <div className="video-missing">Annotated video not available</div>
       )}
-      <EventTimeline events={events} duration={duration} currentTime={now} onSeek={seek} />
-      <RiskCurve risk={risk} duration={duration} currentTime={now} />
-      <EventsTable events={events} onSeek={seek} />
+      <section className="analysis-panel">
+        <div className="analysis-heading">
+          <h3>Event timeline</h3>
+          <span>
+            {events.length} events in {Math.round(duration)} s. Select one to
+            jump to it.
+          </span>
+        </div>
+        <EventTimeline
+          events={events}
+          duration={duration}
+          currentTime={now}
+          onSeek={seek}
+        />
+      </section>
+      <section className="analysis-panel">
+        <div className="analysis-heading">
+          <h3>Accident risk</h3>
+          <span>Probability that an accident starts within 5 s</span>
+        </div>
+        <RiskCurve risk={risk} duration={duration} currentTime={now} />
+      </section>
+      <section className="analysis-panel">
+        <div className="analysis-heading">
+          <h3>All events</h3>
+        </div>
+        <EventsTable events={events} onSeek={seek} />
+      </section>
     </div>
   );
 }

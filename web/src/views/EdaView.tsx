@@ -3,7 +3,7 @@
 // is actually in the code (docs/SPEC.md §12), nothing aspirational.
 import { useState } from "react";
 import Chart from "@/components/Chart";
-import { Card, Loading, Missing, Section } from "@/components/ui";
+import { Choices, Loading, Missing, Section } from "@/components/ui";
 import { OBJECT_COLORS } from "@/lib/classes";
 import { dataUrl, useJson, type EdaVideo } from "@/lib/data";
 
@@ -22,55 +22,88 @@ interface Speeds {
 }
 type Signals = Record<string, [number, number, string][]>;
 
-const STATE_COLORS: Record<string, string> = { red: "#ef4444", yellow: "#eab308", green: "#22c55e", unknown: "#52525b" };
+const STATE_COLORS: Record<string, string> = {
+  red: "#ef4444",
+  yellow: "#eab308",
+  green: "#22c55e",
+  unknown: "#52525b",
+};
 
 export default function EdaView() {
   const summary = useJson<{ videos: EdaVideo[] }>("eda/summary.json");
   const [pick, setPick] = useState(0);
   if (summary.state === "loading") return <Loading />;
-  if (summary.state !== "ok") return <Missing what="The EDA data" how="python scripts/eda.py samples/" />;
+  if (summary.state !== "ok")
+    return <Missing what="The EDA data" how="python scripts/eda.py samples/" />;
   const videos = summary.data.videos;
   const stem = videos[pick]?.name.replace(/\.[^.]+$/, "");
 
   return (
     <>
-      <Section title="The videos" changed="the samples are 4K 4:2:2 10-bit H.264 at 29.97 fps, which the T4 cannot decode in hardware, so Part A decodes only reference frames and never assumes 25 fps.">
+      <Section
+        title="The videos"
+        changed="the samples are 4K 4:2:2 10-bit H.264 at 29.97 fps, which the T4 cannot decode in hardware, so Part A decodes only reference frames and never assumes 25 fps."
+      >
         <VideoTable videos={videos} />
       </Section>
 
-      <Section title="Lighting over time" changed="one sample is at dusk, so lamp colours are judged per lamp against its own on/off levels instead of fixed thresholds.">
+      <Section
+        title="Lighting over time"
+        changed="one sample is at dusk, so lamp colours are judged per lamp against its own on/off levels instead of fixed thresholds."
+      >
         <Chart
           data={videos
             .filter((v) => v.brightness)
-            .map((v) => ({ x: v.brightness!.t, y: v.brightness!.mean_luma, type: "scatter", mode: "lines", name: v.name }))}
-          layout={{ xaxis: { title: { text: "time (s)" } }, yaxis: { title: { text: "mean luma (0–255)" }, range: [0, 255] } }}
+            .map((v) => ({
+              x: v.brightness!.t,
+              y: v.brightness!.mean_luma,
+              type: "scatter",
+              mode: "lines",
+              name: v.name,
+            }))}
+          layout={{
+            xaxis: { title: { text: "time (s)" } },
+            yaxis: { title: { text: "mean luma (0–255)" }, range: [0, 255] },
+          }}
         />
       </Section>
 
-      <div className="flex flex-wrap gap-2">
-        {videos.map((v, i) => (
-          <button
-            key={v.name}
-            type="button"
-            onClick={() => setPick(i)}
-            className={`rounded-lg px-3 py-1.5 text-sm ${i === pick ? "bg-sky-500 text-white" : "border border-white/15 hover:bg-white/10"}`}
-          >
-            {v.name}
-          </button>
-        ))}
-      </div>
+      <Choices
+        label="Video"
+        options={videos.map((v) => v.name)}
+        value={pick}
+        onChange={setPick}
+      />
       {stem && <PerVideo key={stem} stem={stem} />}
 
       <Section title="Where things move">
-        <Images files={["heatmap.jpg", "trajectories.jpg"]} captions={["Tracks passing each spot (log scale)", "Tracks, colour = direction of travel"]} />
+        <Images
+          files={["heatmap.jpg", "trajectories.jpg"]}
+          captions={[
+            "Tracks passing each spot (log scale)",
+            "Tracks, colour = direction of travel",
+          ]}
+        />
       </Section>
 
-      <Section title="Where people walk" changed="people also cut across the carriageway between and beside the zebras, so jaywalking is judged by where a person's feet are on the road, not by a hand-made list of spots.">
-        <Images files={["heatmap_people.jpg"]} captions={["Pedestrian tracks passing each spot (log scale)"]} />
+      <Section
+        title="Where people walk"
+        changed="people also cut across the carriageway between and beside the zebras, so jaywalking is judged by where a person's feet are on the road, not by a hand-made list of spots."
+      >
+        <Images
+          files={["heatmap_people.jpg"]}
+          captions={["Pedestrian tracks passing each spot (log scale)"]}
+        />
       </Section>
 
-      <Section title="Learned traffic direction" changed="lane directions in the scene file are proposed from this field (scripts/learn_lane_flow.py) instead of being guessed by hand.">
-        <Images files={["lane_flow.jpg"]} captions={["Mean motion per grid cell over the scene layers"]} />
+      <Section
+        title="Learned traffic direction"
+        changed="lane directions in the scene file are proposed from this field (scripts/learn_lane_flow.py) instead of being guessed by hand."
+      >
+        <Images
+          files={["lane_flow.jpg"]}
+          captions={["Mean motion per grid cell over the scene layers"]}
+        />
       </Section>
     </>
   );
@@ -78,25 +111,35 @@ export default function EdaView() {
 
 function VideoTable({ videos }: { videos: EdaVideo[] }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm tabular-nums">
-        <thead className="text-xs uppercase text-zinc-500">
+    <div className="table-wrap">
+      <table className="data-table">
+        <thead>
           <tr>
-            {["Video", "Resolution", "FPS", "Duration", "Codec", "Pixel format", "Bit rate"].map((h) => (
-              <th key={h} className="py-2 pr-4 font-medium">{h}</th>
+            {[
+              "Video",
+              "Resolution",
+              "FPS",
+              "Duration",
+              "Codec",
+              "Pixel format",
+              "Bit rate",
+            ].map((h) => (
+              <th key={h}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {videos.map((v) => (
-            <tr key={v.name} className="border-t border-white/5">
-              <td className="py-1.5 pr-4">{v.name}</td>
-              <td className="py-1.5 pr-4">{v.width}×{v.height}</td>
-              <td className="py-1.5 pr-4">{v.fps}</td>
-              <td className="py-1.5 pr-4">{(v.duration / 60).toFixed(1)} min</td>
-              <td className="py-1.5 pr-4">{v.codec ?? "—"}</td>
-              <td className="py-1.5 pr-4">{v.pix_fmt ?? "—"}</td>
-              <td className="py-1.5">{v.bit_rate_mbps ? `${v.bit_rate_mbps} Mbps` : "—"}</td>
+            <tr key={v.name}>
+              <td>{v.name}</td>
+              <td>
+                {v.width}×{v.height}
+              </td>
+              <td>{v.fps}</td>
+              <td>{(v.duration / 60).toFixed(1)} min</td>
+              <td>{v.codec ?? "—"}</td>
+              <td>{v.pix_fmt ?? "—"}</td>
+              <td>{v.bit_rate_mbps ? `${v.bit_rate_mbps} Mbps` : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -122,22 +165,46 @@ function PerVideo({ stem }: { stem: string }) {
               mode: "lines",
               stackgroup: "one",
               name: cls,
-              line: { width: 0.5, color: OBJECT_COLORS[cls] ?? OBJECT_COLORS.other },
+              line: {
+                width: 0.5,
+                color: OBJECT_COLORS[cls] ?? OBJECT_COLORS.other,
+              },
             }))}
-            layout={{ xaxis: { title: { text: "time (s)" } }, yaxis: { title: { text: "objects visible" } } }}
+            layout={{
+              xaxis: { title: { text: "time (s)" } },
+              yaxis: { title: { text: "objects visible" } },
+            }}
           />
         ) : (
-          counts.state !== "loading" && <Missing what="Object counts" how="scripts/eda.py" />
+          counts.state !== "loading" && (
+            <Missing what="Object counts" how="scripts/eda.py" />
+          )
         )}
       </Section>
       <Section title="Traffic density per minute">
         {density.state === "ok" && (
           <Chart
             data={[
-              { x: density.data.minute, y: density.data.vehicles, type: "bar", name: "vehicles", marker: { color: OBJECT_COLORS.car } },
-              { x: density.data.minute, y: density.data.persons, type: "bar", name: "pedestrians", marker: { color: OBJECT_COLORS.person } },
+              {
+                x: density.data.minute,
+                y: density.data.vehicles,
+                type: "bar",
+                name: "vehicles",
+                marker: { color: OBJECT_COLORS.car },
+              },
+              {
+                x: density.data.minute,
+                y: density.data.persons,
+                type: "bar",
+                name: "pedestrians",
+                marker: { color: OBJECT_COLORS.person },
+              },
             ]}
-            layout={{ barmode: "group", xaxis: { title: { text: "minute" } }, yaxis: { title: { text: "new tracks per minute" } } }}
+            layout={{
+              barmode: "group",
+              xaxis: { title: { text: "minute" } },
+              yaxis: { title: { text: "new tracks per minute" } },
+            }}
           />
         )}
       </Section>
@@ -150,7 +217,11 @@ function PerVideo({ stem }: { stem: string }) {
               type: "bar",
               name: `${lane || "outside lanes"} (median ${s.median_kmh} km/h)`,
             }))}
-            layout={{ barmode: "overlay", xaxis: { title: { text: "km/h (bin start)" } }, yaxis: { title: { text: "samples" } } }}
+            layout={{
+              barmode: "overlay",
+              xaxis: { title: { text: "km/h (bin start)" } },
+              yaxis: { title: { text: "samples" } },
+            }}
           />
         </Section>
       )}
@@ -170,7 +241,10 @@ function PerVideo({ stem }: { stem: string }) {
                 hovertemplate: `${sid} ${state}: ${t0.toFixed(1)}–${t1.toFixed(1)} s<extra></extra>`,
               })),
             )}
-            layout={{ barmode: "overlay", xaxis: { title: { text: "time (s)" } } }}
+            layout={{
+              barmode: "overlay",
+              xaxis: { title: { text: "time (s)" } },
+            }}
           />
         </Section>
       )}
@@ -180,13 +254,13 @@ function PerVideo({ stem }: { stem: string }) {
 
 function Images({ files, captions }: { files: string[]; captions: string[] }) {
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className={files.length > 1 ? "figure-grid" : undefined}>
       {files.map((f, i) => (
-        <Card key={f} className="p-2">
+        <figure key={f} className="figure">
           {/* eslint-disable-next-line @next/next/no-img-element -- static export, plain img */}
-          <img src={dataUrl(`eda/${f}`)} alt={captions[i]} loading="lazy" className="w-full rounded-lg" />
-          <p className="mt-2 text-xs text-zinc-400">{captions[i]}</p>
-        </Card>
+          <img src={dataUrl(`eda/${f}`)} alt={captions[i]} loading="lazy" />
+          <figcaption>{captions[i]}</figcaption>
+        </figure>
       ))}
     </div>
   );

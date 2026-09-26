@@ -5,9 +5,14 @@
 import { useEffect, useRef, useState } from "react";
 import SampleResult from "@/components/SampleResult";
 import VideoResult from "@/components/VideoResult";
-import { Card } from "@/components/ui";
+import { Arrow, Card } from "@/components/ui";
 import type { EventTuple, RiskPoint } from "@/lib/classes";
-import { useJson, type ResultsIndex, type ResultVideo } from "@/lib/data";
+import {
+  dataUrl,
+  useJson,
+  type ResultsIndex,
+  type ResultVideo,
+} from "@/lib/data";
 
 const API = (process.env.NEXT_PUBLIC_DEMO_API ?? "").replace(/\/$/, "");
 // Keep in sync with demo/config.yaml (max_upload_mb, max_process_sec).
@@ -44,13 +49,19 @@ type View =
   | { kind: "example"; video: ResultVideo };
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
 
 // fetch() reports no upload progress, and a raw camera file takes minutes to send.
-function send(file: File, onProgress: (fraction: number) => void): Promise<{ job_id?: string; message?: string }> {
+function send(
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<{ job_id?: string; message?: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API}/api/jobs`);
@@ -65,9 +76,16 @@ function send(file: File, onProgress: (fraction: number) => void): Promise<{ job
         // a proxy error page: keep the status code
       }
       if (xhr.status >= 200 && xhr.status < 300 && json.job_id) resolve(json);
-      else reject(new HttpError(xhr.status, json.message ?? `the server answered ${xhr.status}`));
+      else
+        reject(
+          new HttpError(
+            xhr.status,
+            json.message ?? `the server answered ${xhr.status}`,
+          ),
+        );
     };
-    xhr.onerror = () => reject(new Error("the connection to the demo server failed"));
+    xhr.onerror = () =>
+      reject(new Error("the connection to the demo server failed"));
     const body = new FormData();
     body.append("file", file);
     xhr.send(body);
@@ -75,14 +93,21 @@ function send(file: File, onProgress: (fraction: number) => void): Promise<{ job
 }
 
 function humanDuration(sec: number): string {
-  return sec < 90 ? `${Math.max(5, Math.round(sec / 5) * 5)} s` : `${Math.round(sec / 60)} min`;
+  return sec < 90
+    ? `${Math.max(5, Math.round(sec / 5) * 5)} s`
+    : `${Math.round(sec / 60)} min`;
 }
 
 function progressLabel(status: JobStatus): string {
   if (status.status === "queued") {
-    return status.ahead ? `Waiting in the queue (${status.ahead} ahead of you)` : "Waiting in the queue";
+    return status.ahead
+      ? `Waiting in the queue (${status.ahead} ahead of you)`
+      : "Waiting in the queue";
   }
-  const eta = status.eta_sec !== undefined ? `, about ${humanDuration(status.eta_sec)} left` : "";
+  const eta =
+    status.eta_sec !== undefined
+      ? `, about ${humanDuration(status.eta_sec)} left`
+      : "";
   return `Processing: ${status.stage || "starting"}${eta}`;
 }
 
@@ -101,17 +126,32 @@ export default function UploadDemo() {
     let last = "";
     const tick = async () => {
       try {
-        const res = await fetch(`${API}/api/jobs/${jobId}`, { cache: "no-store" });
-        if (res.status === 404) throw new HttpError(404, "the job expired or the demo server restarted");
+        const res = await fetch(`${API}/api/jobs/${jobId}`, {
+          cache: "no-store",
+        });
+        if (res.status === 404)
+          throw new HttpError(
+            404,
+            "the job expired or the demo server restarted",
+          );
         if (!res.ok) throw new Error(`the server answered ${res.status}`);
         const status = (await res.json()) as JobStatus;
         if (!alive) return;
         failures = 0;
         const key = `${status.status}|${status.stage}|${status.progress}|${status.ahead}`;
         if (key !== last) [last, lastChange] = [key, Date.now()];
-        if (status.status === "done" && status.result) setView({ kind: "done", result: status.result });
-        else if (status.status === "error") setView({ kind: "error", message: status.message ?? "processing failed" });
-        else if (Date.now() - lastChange > STALL_MS) setView({ kind: "error", message: "the job stopped making progress" });
+        if (status.status === "done" && status.result)
+          setView({ kind: "done", result: status.result });
+        else if (status.status === "error")
+          setView({
+            kind: "error",
+            message: status.message ?? "processing failed",
+          });
+        else if (Date.now() - lastChange > STALL_MS)
+          setView({
+            kind: "error",
+            message: "the job stopped making progress",
+          });
         else {
           setView({ kind: "job", id: jobId, status });
           timer = setTimeout(tick, POLL_MS);
@@ -120,7 +160,10 @@ export default function UploadDemo() {
         if (!alive) return;
         failures += 1;
         if (e instanceof HttpError || failures > POLL_RETRIES) {
-          setView({ kind: "error", message: `lost contact with the demo server (${e instanceof Error ? e.message : String(e)})` });
+          setView({
+            kind: "error",
+            message: `lost contact with the demo server (${e instanceof Error ? e.message : String(e)})`,
+          });
         } else {
           timer = setTimeout(tick, POLL_MS * 2 ** failures);
         }
@@ -134,42 +177,66 @@ export default function UploadDemo() {
   }, [jobId]);
 
   async function upload(file: File) {
-    if (!/\.mp4$/i.test(file.name)) return setView({ kind: "error", message: "please choose an .mp4 file" });
+    if (!/\.mp4$/i.test(file.name))
+      return setView({ kind: "error", message: "please choose an .mp4 file" });
     if (file.size > MAX_MB * 1024 * 1024) {
-      return setView({ kind: "error", message: `the file is larger than ${MAX_MB / 1024} GB; please trim it first` });
+      return setView({
+        kind: "error",
+        message: `the file is larger than ${MAX_MB / 1024} GB; please trim it first`,
+      });
     }
-    if (!API) return setView({ kind: "error", message: "the demo server is not configured on this deployment; try an example below" });
+    if (!API)
+      return setView({
+        kind: "error",
+        message:
+          "the demo server is not configured on this deployment; try an example below",
+      });
     setView({ kind: "uploading", fraction: null });
     try {
-      const json = await send(file, (fraction) => setView({ kind: "uploading", fraction }));
-      setView({ kind: "job", id: json.job_id as string, status: { status: "queued", progress: 0 } });
+      const json = await send(file, (fraction) =>
+        setView({ kind: "uploading", fraction }),
+      );
+      setView({
+        kind: "job",
+        id: json.job_id as string,
+        status: { status: "queued", progress: 0 },
+      });
     } catch (e) {
-      setView({ kind: "error", message: `upload failed: ${e instanceof Error ? e.message : String(e)}` });
+      setView({
+        kind: "error",
+        message: `upload failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   }
 
   const busy = view.kind === "uploading" || view.kind === "job";
   return (
-    <div className="space-y-6">
-      <Card>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+    <div className="demo">
+      <div className="upload-panel">
+        <div className="upload-primary">
+          <h2>Your footage.</h2>
+          <p>
+            Upload an MP4 and get the annotated video, timed events and the
+            accident-risk curve. The first {ANALYSED_SEC} seconds are analysed
+            on a CPU server, which takes a few minutes.
+          </p>
           <button
             type="button"
             disabled={busy}
             onClick={() => input.current?.click()}
-            className="rounded-lg bg-sky-500 px-4 py-2 font-medium text-white hover:bg-sky-400 disabled:opacity-50"
+            className="button"
           >
-            Upload a video
+            Upload a video <Arrow />
           </button>
-          <p className="text-sm text-zinc-400">
-            Any .mp4 up to {MAX_MB / 1024} GB: raw camera files are fine as they are. We analyse the first {ANALYSED_SEC} s
-            on a CPU server, which takes a few minutes. Scene rules need the same camera as the samples; other
-            videos get the camera-independent classes only.
+          <p className="meta">
+            MP4, up to {MAX_MB / 1024} GB. Scene rules need the same camera as
+            the samples; other videos get the camera-independent classes only.
           </p>
           <input
             ref={input}
             type="file"
             accept="video/mp4,.mp4"
+            aria-label="Choose an MP4 video"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -178,51 +245,85 @@ export default function UploadDemo() {
             }}
           />
         </div>
-        {examples.state === "ok" && examples.data.videos.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2 text-sm">
-            <span className="text-zinc-500">Or see an example:</span>
-            {examples.data.videos.slice(0, 2).map((v) => (
+        <div className="sample-picker">
+          <h2>Or a sample.</h2>
+          <p>
+            No upload needed: open a sample with annotated playback, the event
+            timeline and the risk curve.
+          </p>
+          {examples.state === "ok" &&
+            examples.data.videos.slice(0, 2).map((v) => (
               <button
                 key={v.id}
                 type="button"
                 disabled={busy}
+                aria-pressed={view.kind === "example" && view.video.id === v.id}
                 onClick={() => setView({ kind: "example", video: v })}
-                className="rounded-lg border border-white/15 px-3 py-1 hover:bg-white/10 disabled:opacity-50"
+                className="sample-option"
               >
-                {v.name}
+                {v.poster && <img src={dataUrl(v.poster)} alt="" />}
+                <span>
+                  <strong>{v.name}</strong>
+                  <small>
+                    {Math.floor(v.duration / 60)}:
+                    {String(Math.floor(v.duration % 60)).padStart(2, "0")},
+                    annotated
+                  </small>
+                </span>
+                <Arrow />
               </button>
             ))}
-          </div>
-        )}
-      </Card>
+          {examples.state === "loading" && (
+            <p role="status">Loading samples…</p>
+          )}
+          {examples.state !== "ok" && examples.state !== "loading" && (
+            <p>Samples are currently unavailable.</p>
+          )}
+        </div>
+      </div>
 
       {view.kind === "uploading" && (
         <Progress
-          label={view.fraction === null ? "Uploading" : `Uploading (${Math.round(view.fraction * 100)}%)`}
+          label={
+            view.fraction === null
+              ? "Uploading"
+              : `Uploading (${Math.round(view.fraction * 100)}%)`
+          }
           value={view.fraction === null ? null : view.fraction * 100}
         />
       )}
       {view.kind === "job" && (
-        <Progress label={progressLabel(view.status)} value={view.status.status === "queued" ? null : (view.status.progress ?? 0)} />
+        <Progress
+          label={progressLabel(view.status)}
+          value={
+            view.status.status === "queued" ? null : (view.status.progress ?? 0)
+          }
+        />
       )}
       {view.kind === "error" && (
-        <Card className="border-red-500/40 text-sm">
-          <p className="text-red-300">Sorry: {view.message}.</p>
-          <button type="button" className="mt-2 text-sky-300 underline" onClick={() => setView({ kind: "idle" })}>
-            Try again
+        <Card className="notice notice-error">
+          <p role="alert">Sorry: {view.message}.</p>
+          <button
+            type="button"
+            className="text-link"
+            onClick={() => setView({ kind: "idle" })}
+          >
+            Try again <Arrow />
           </button>
         </Card>
       )}
       {view.kind === "done" && (
-        <div className="space-y-3">
+        <div className="demo-result">
           {(view.result.source_duration ?? 0) > view.result.duration + 0.5 && (
-            <Card className="text-sm text-zinc-300">
-              Analysed the first {Math.round(view.result.duration)} s of your {humanDuration(view.result.source_duration ?? 0)} video.
+            <Card className="notice">
+              Analysed the first {Math.round(view.result.duration)} s of your{" "}
+              {humanDuration(view.result.source_duration ?? 0)} video.
             </Card>
           )}
           {!view.result.camera_match && (
-            <Card className="border-amber-500/40 text-sm text-amber-200">
-              Different camera: scene-specific rules (red light, stop line, lanes) were disabled for this video.
+            <Card className="notice notice-warning">
+              Different camera: scene-specific rules (red light, stop line,
+              lanes) were disabled for this video.
             </Card>
           )}
           <VideoResult
@@ -232,11 +333,11 @@ export default function UploadDemo() {
             duration={view.result.duration}
           />
           <a
-            className="inline-block text-sm text-sky-300 underline"
+            className="text-link"
             download="roadwatch_result.json"
             href={`data:application/json,${encodeURIComponent(JSON.stringify({ events: view.result.events, risk: view.result.risk }))}`}
           >
-            Download the result as JSON
+            Download the result as JSON <Arrow diagonal />
           </a>
         </div>
       )}
@@ -247,14 +348,29 @@ export default function UploadDemo() {
 
 function Progress({ label, value }: { label: string; value: number | null }) {
   return (
-    <Card>
-      <div className="mb-2 text-sm text-zinc-300">{label}…</div>
-      <div className="h-2 overflow-hidden rounded bg-white/10">
+    <div className="progress">
+      <div className="progress-label" role="status">
+        {label}…
+      </div>
+      <div
+        className="progress-track"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value === null ? undefined : value}
+      >
         <div
-          className={`h-full bg-sky-500 transition-all ${value === null ? "w-1/3 animate-pulse" : ""}`}
-          style={value === null ? undefined : { width: `${Math.max(3, Math.min(100, value))}%` }}
+          className={`progress-fill ${value === null ? "is-indeterminate" : ""}`}
+          style={
+            value === null
+              ? undefined
+              : {
+                  transform: `scaleX(${Math.max(3, Math.min(100, value)) / 100})`,
+                }
+          }
         />
       </div>
-    </Card>
+    </div>
   );
 }

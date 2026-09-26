@@ -8,8 +8,15 @@ import { dataUrl, useJson, type ResultVideo } from "@/lib/data";
 export default function SampleResult({ video }: { video: ResultVideo }) {
   const events = useJson<EventTuple[]>(video.events);
   const risk = useJson<RiskPoint[]>(video.risk);
-  if (events.state === "loading" || risk.state === "loading") return <Loading />;
-  if (events.state !== "ok") return <Missing what={`Events of ${video.name}`} how="scripts/render_samples.py" />;
+  if (events.state === "loading" || risk.state === "loading")
+    return <Loading />;
+  if (events.state !== "ok")
+    return (
+      <Missing
+        what={`Events of ${video.name}`}
+        how="scripts/render_samples.py"
+      />
+    );
   return (
     <VideoResult
       src={dataUrl(video.video)}

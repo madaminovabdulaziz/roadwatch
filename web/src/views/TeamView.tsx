@@ -1,8 +1,6 @@
 "use client";
-// Team cards from public/data/team.json (edited by hand; photos go to public/data/team/).
-import { Card, Loading, Missing } from "@/components/ui";
+import { Arrow, Loading, Missing } from "@/components/ui";
 import { dataUrl, useJson } from "@/lib/data";
-
 interface Member {
   name: string;
   role: string;
@@ -12,51 +10,107 @@ interface Member {
   linkedin?: string;
   portfolio?: string;
   projects?: { title: string; url?: string }[];
+  affiliations?: {
+    name: string;
+    label?: string;
+    logo?: string;
+    logoLayout?: "padded-square";
+    url?: string;
+  }[];
 }
-
 export default function TeamView() {
   const team = useJson<{ members: Member[] }>("team.json");
   if (team.state === "loading") return <Loading />;
-  if (team.state !== "ok") return <Missing what="The team page data" how="edit web/public/data/team.json" />;
+  if (team.state !== "ok")
+    return (
+      <Missing what="The team page data" how="edit web/public/data/team.json" />
+    );
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      {team.data.members.map((m) => (
-        <Card key={m.role}>
-          {m.photo ? (
-            // eslint-disable-next-line @next/next/no-img-element -- static export, plain img
-            <img src={dataUrl(m.photo)} alt={m.name} className="mb-3 aspect-square w-24 rounded-full object-cover" />
-          ) : (
-            <div className="mb-3 grid aspect-square w-24 place-items-center rounded-full bg-white/10 text-2xl">
-              {m.name ? m.name[0] : "?"}
-            </div>
-          )}
-          <div className="font-semibold">{m.name || "Name to be added"}</div>
-          <div className="text-sm text-sky-300">{m.role}</div>
+    <div className="team-grid">
+      {team.data.members.map((m, index) => (
+        <article className="team-card" key={`${m.role}-${index}`}>
+          <div className="portrait-stage">
+            {m.photo ? (
+              <img
+                src={dataUrl(m.photo)}
+                alt={m.name || m.role}
+                className="team-portrait"
+                loading="lazy"
+              />
+            ) : (
+              <span className="portrait-initial" aria-hidden="true">
+                {(m.name || m.role).charAt(0)}
+              </span>
+            )}
+          </div>
+          <h3>{m.name || m.role}</h3>
+          {m.name && <p className="team-role">{m.role}</p>}
           {m.built.length > 0 && (
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-300">
+            <ul className="member-contributions">
               {m.built.map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>
           )}
-          <div className="mt-3 flex flex-wrap gap-3 text-sm">
-            {m.github && <a className="text-sky-300 underline" href={m.github}>GitHub</a>}
-            {m.linkedin && <a className="text-sky-300 underline" href={m.linkedin}>LinkedIn</a>}
-            {m.portfolio && <a className="text-sky-300 underline" href={m.portfolio}>Portfolio</a>}
-          </div>
-          {m.projects && m.projects.length > 0 && (
-            <div className="mt-3 text-sm">
-              <div className="text-zinc-500">Past projects</div>
+          {!!m.affiliations?.length && (
+            <ul
+              className="affiliations"
+              aria-label={`${m.name || m.role}: background and affiliations`}
+            >
+              {m.affiliations.map((a) => {
+                const logo = a.logo ? (
+                  <span
+                    className={`affiliation-logo ${a.logoLayout === "padded-square" ? "affiliation-logo-padded" : ""}`}
+                  >
+                    <img src={dataUrl(a.logo)} alt={a.name} loading="lazy" />
+                  </span>
+                ) : (
+                  <span className="affiliation-name">{a.name}</span>
+                );
+                return (
+                  <li
+                    key={a.name}
+                    title={a.label ? `${a.label}: ${a.name}` : a.name}
+                  >
+                    {a.url ? <a href={a.url}>{logo}</a> : logo}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {(m.github || m.linkedin || m.portfolio) && (
+            <div className="member-links">
+              {m.github && (
+                <a href={m.github}>
+                  GitHub <Arrow diagonal />
+                </a>
+              )}
+              {m.linkedin && (
+                <a href={m.linkedin}>
+                  LinkedIn <Arrow diagonal />
+                </a>
+              )}
+              {m.portfolio && (
+                <a href={m.portfolio}>
+                  Portfolio <Arrow diagonal />
+                </a>
+              )}
+            </div>
+          )}
+          {!!m.projects?.length && (
+            <div className="member-projects">
               {m.projects.map((p) =>
                 p.url ? (
-                  <a key={p.title} href={p.url} className="block text-zinc-300 underline">{p.title}</a>
+                  <a key={p.title} href={p.url}>
+                    {p.title} <Arrow diagonal />
+                  </a>
                 ) : (
-                  <div key={p.title} className="text-zinc-300">{p.title}</div>
+                  <p key={p.title}>{p.title}</p>
                 ),
               )}
             </div>
           )}
-        </Card>
+        </article>
       ))}
     </div>
   );
