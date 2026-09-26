@@ -2,7 +2,8 @@
 
 For every sample with a track cache, writes web/public/data/results/<id>/: annotated.mp4 (720p H.264),
 poster.jpg, events.json ([[start, end, label], ...]) and risk.json ([[t, score], ...]); one short clip
-per detected class (2 s before -> 2 s after its first event) for the gallery (results/gallery.json);
+per detected class (2 s before -> 2 s after the event that best matches a dev label of its class, else
+its first event) for the gallery (results/gallery.json);
 and results/index.json.
 
 Events, in order of preference:
@@ -39,6 +40,9 @@ from roadwatch.scene.scene import Scene  # noqa: E402
 from roadwatch.video import read_window  # noqa: E402
 
 CLIP_PAD_SEC = 2.0
+# full-length 720p samples at the demo's crf 23 run to ~17 MB per minute (C3902: 88 MB); crf 28 with the
+# slower preset halves that with the overlay text still sharp, so the page loads on a phone
+WEB_CRF, WEB_PRESET = 28, "medium"
 POSTER_HEIGHT = 720
 
 
@@ -51,6 +55,29 @@ def preview_events(tt, meta, scene: Scene, timeline) -> list[list]:
     ctx = VideoContext(meta, stride, timeline)
     segs = pipeline.run_rules(pipeline.prepare(tt, scene), scene, ctx, th, labels=list(RULES))
     return to_events(postprocess(segs, ctx, th), meta.duration, stride / meta.fps, th)
+
+
+def _tiou(a: list, b: list) -> float:
+    inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    union = max(a[1], b[1]) - min(a[0], b[0])
+    return inter / union if union > 0 else 0.0
+
+
+def gallery_picks(events: dict[str, list[list]], gt: dict[str, Any]) -> dict[str, tuple[str, list]]:
+    """One event per class for the gallery: {label: (video name, event)}.
+
+    With dev labels, the event that best matches a labelled one of its class (temporal IoU), so the
+    gallery shows what the detector gets right rather than whichever event came first; without a match
+    (or labels), the class's first event. Videos in the given order, events by start time.
+    """
+    best: dict[str, tuple[float, str, list]] = {}
+    for name, evs in events.items():
+        labelled = (gt.get(name) or {}).get("events", [])
+        for ev in sorted(evs, key=lambda e: e[0]):
+            score = max((_tiou(ev, g) for g in labelled if g[2] == ev[2]), default=0.0)
+            if ev[2] not in best or score > best[ev[2]][0]:
+                best[ev[2]] = (score, name, ev)
+    return {label: (name, ev) for label, (_, name, ev) in best.items()}
 
 
 def save_poster(video: Path, t: float, out: Path) -> None:
@@ -69,6 +96,9 @@ def main() -> int:
     ap.add_argument("--preview-all", action="store_true", help="run every rule (review only)")
     ap.add_argument("--no-blur", action="store_true", help="do not blur faces")
     ap.add_argument("--no-clips", action="store_true")
+    ap.add_argument(
+        "--gt", type=Path, default=REPO_ROOT / "labels" / "dev_gt.json", help="dev labels for the gallery"
+    )
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "results")
     args = ap.parse_args()
 
@@ -81,6 +111,7 @@ def main() -> int:
     gallery: list[dict[str, Any]] = []
     ratios = []
 
+    runs: list[dict[str, Any]] = []
     for video in videos:
         stem = video.stem
         try:
@@ -101,7 +132,16 @@ def main() -> int:
             events = preview_events(tt, meta, video_scene, timeline)
         else:
             events = pipeline.events_from_tracks(tt, meta, video_scene, signal_timeline=timeline)
+        runs.append(
+            {"video": video, "tt": tt, "meta": meta, "timeline": timeline, "scene": video_scene}
+            | {"events": events, "risk": risk}
+        )
 
+    gt = json.loads(args.gt.read_text(encoding="utf-8")) if args.gt and args.gt.exists() else {}
+    picks = gallery_picks({r["video"].name: r["events"] for r in runs}, gt)
+    for run in runs:
+        video, tt, meta, events, risk = run["video"], run["tt"], run["meta"], run["events"], run["risk"]
+        stem, video_scene, timeline = video.stem, run["scene"], run["timeline"]
         folder = args.out / stem
         folder.mkdir(parents=True, exist_ok=True)
         render_video(
@@ -113,6 +153,8 @@ def main() -> int:
             folder / "annotated.mp4",
             blur_faces=not args.no_blur,
             signal_timeline=timeline,
+            crf=WEB_CRF,
+            preset=WEB_PRESET,
         )
         save_poster(video, events[0][0] if events else 0.0, folder / "poster.jpg")
         (folder / "events.json").write_text(json.dumps(events) + "\n", encoding="utf-8")
@@ -128,36 +170,35 @@ def main() -> int:
                 "risk": f"results/{stem}/risk.json",
             }
         )
-        if not args.no_clips:
-            seen = {g["label"] for g in gallery}
-            for s, e, label in events:
-                if label in seen:
-                    continue
-                seen.add(label)
-                clip = folder / f"clip_{label}.mp4"
-                t0, t1 = max(0.0, s - CLIP_PAD_SEC), min(meta.duration, e + CLIP_PAD_SEC)
-                render_video(
-                    video,
-                    tt,
-                    events,
-                    risk,
-                    video_scene,
-                    clip,
-                    t0=t0,
-                    t1=t1,
-                    blur_faces=not args.no_blur,
-                    signal_timeline=timeline,
-                )
-                save_poster(video, s, folder / f"clip_{label}.jpg")
-                gallery.append(
-                    {
-                        "label": label,
-                        "clip": f"results/{stem}/{clip.name}",
-                        "poster": f"results/{stem}/clip_{label}.jpg",
-                        "video": video.name,
-                        "start": s,
-                    }
-                )
+        for label, (name, (s, e, _)) in picks.items():
+            if args.no_clips or name != video.name:
+                continue
+            clip = folder / f"clip_{label}.mp4"
+            t0, t1 = max(0.0, s - CLIP_PAD_SEC), min(meta.duration, e + CLIP_PAD_SEC)
+            render_video(
+                video,
+                tt,
+                events,
+                risk,
+                video_scene,
+                clip,
+                t0=t0,
+                t1=t1,
+                blur_faces=not args.no_blur,
+                signal_timeline=timeline,
+                crf=WEB_CRF,
+                preset=WEB_PRESET,
+            )
+            save_poster(video, s, folder / f"clip_{label}.jpg")
+            gallery.append(
+                {
+                    "label": label,
+                    "clip": f"results/{stem}/{clip.name}",
+                    "poster": f"results/{stem}/clip_{label}.jpg",
+                    "video": video.name,
+                    "start": s,
+                }
+            )
         print(f"{video.name}: {len(events)} events, {len(risk)} risk samples -> {folder}", flush=True)
 
     if ratios:

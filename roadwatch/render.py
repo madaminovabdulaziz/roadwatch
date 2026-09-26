@@ -128,8 +128,14 @@ def render_video(
     t1: float = math.inf,
     blur_faces: bool = True,
     signal_timeline: SignalTimeline | None = None,
+    crf: int = 23,
+    preset: str = "veryfast",
 ) -> Path:
-    """Write the annotated MP4 (see the module docstring) and return its path."""
+    """Write the annotated MP4 (see the module docstring) and return its path.
+
+    `crf` / `preset` are libx264's: the live demo encodes while the user waits (veryfast); the website's
+    full-length samples trade encoding time for half the size (scripts/render_samples.py).
+    """
     meta = probe(video_path)
     out_h = min(height, meta.height) // 2 * 2
     out_w = max(2, round(meta.width * out_h / meta.height / 2) * 2)
@@ -158,7 +164,7 @@ def render_video(
     with av.open(str(out_path), "w", options={"movflags": "+faststart"}) as container:
         stream = container.add_stream("libx264", rate=rate)
         stream.width, stream.height, stream.pix_fmt = out_w, out_h, "yuv420p"
-        stream.options = {"preset": "veryfast", "crf": "23"}
+        stream.options = {"preset": preset, "crf": str(crf)}
         base = (
             draw_scene(np.zeros((out_h, out_w, 3), np.uint8), small_scene, alpha=0.18)
             if scene.layers

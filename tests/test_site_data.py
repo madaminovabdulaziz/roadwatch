@@ -1,0 +1,45 @@
+"""The website's report is filled from the generated files, never typed by hand (scripts/write_report.py)."""
+
+from __future__ import annotations
+
+from scripts import write_report
+
+
+def test_alarms_are_counted_as_evaluate_counts_them() -> None:
+    # two runs 1 s apart merge into one alarm; a run 3 s later is a second one
+    risk = [[0.0, 0.1], [1.0, 0.6], [1.1, 0.7], [2.1, 0.6], [5.2, 0.9], [6.0, 0.2]]
+    assert write_report.alarms(risk, 0.5) == 2
+    assert write_report.alarms([[0.0, 0.1]], 0.5) == 0
+
+
+def test_report_numbers_come_from_the_files() -> None:
+    metrics = {
+        "gt_events": 39,
+        "pred_events": 42,
+        "score_a": 0.4706,
+        "per_class": {"stop_line": {"f1_mean": 1.0}, "stopped_vehicle": {"f1_mean": 0.0}},
+    }
+    pred = {
+        "videos": {"a.mp4": {"events": [], "risk": [[0.0, 0.05], [0.1, 0.9], [0.2, 0.05]]}},
+        "log": {"a.mp4": {"duration": 120.0, "total_sec": 360.0}},
+    }
+    facts = write_report.facts(metrics, pred)
+    assert facts["alarms"] == 1 and facts["minutes"] == 2.0 and facts["ratios"] == "a 3.00x"
+    text = " ".join(p for s in write_report.report(facts)["sections"] for p in s["paragraphs"])
+    assert "Score A 0.471 (42 predicted events)" in text
+    assert "stop_line 1.00" in text and "count as 0: stopped_vehicle" in text
+    assert "1 alarm in 2.0 min" in text and "  " not in text
+
+
+def test_the_gallery_shows_the_event_that_matches_a_label() -> None:
+    from scripts.render_samples import gallery_picks
+
+    events = {
+        "a.mp4": [[2.0, 4.0, "jaywalking"], [10.0, 20.0, "jaywalking"], [5.0, 6.0, "red_light"]],
+        "b.mp4": [[1.0, 3.0, "jaywalking"]],
+    }
+    gt = {"a.mp4": {"events": [[11.0, 20.0, "jaywalking"]]}}
+    picks = gallery_picks(events, gt)
+    assert picks["jaywalking"] == ("a.mp4", [10.0, 20.0, "jaywalking"])  # not the first one, at 2 s
+    assert picks["red_light"] == ("a.mp4", [5.0, 6.0, "red_light"])  # unlabelled class: its first event
+    assert gallery_picks(events, {})["jaywalking"] == ("a.mp4", [2.0, 4.0, "jaywalking"])
