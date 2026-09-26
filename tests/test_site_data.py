@@ -49,3 +49,17 @@ def test_the_gallery_shows_the_event_that_matches_a_label() -> None:
     assert picks["jaywalking"] == ("a.mp4", [10.0, 20.0, "jaywalking"])  # not the first one, at 2 s
     assert picks["red_light"] == ("a.mp4", [5.0, 6.0, "red_light"])  # unlabelled class: its first event
     assert gallery_picks(events, {})["jaywalking"] == ("a.mp4", [2.0, 4.0, "jaywalking"])
+
+
+def test_event_map_draws_each_path_in_its_class_colour() -> None:
+    import numpy as np
+
+    from scripts import event_heat
+
+    assert event_heat._bgr("#ff8000") == (0, 128, 255)
+    bg = np.full((1080, 1920, 3), 200, np.uint8)
+    path = np.array([[100.0, 900.0], [1800.0, 900.0]])
+    img = event_heat.draw([("jaywalking", path)], bg, {"jaywalking": "#00ff00"})
+    assert img.shape == (1080, 1920, 3)
+    b, g, r = img[900, 1000].tolist()
+    assert g > 180 and b < 120 and r < 120  # the path, green over the dimmed frame

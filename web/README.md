@@ -30,7 +30,7 @@ after the final Kaggle run; the full-length renders take about 30 minutes on a l
 | `results/index.json` + `results/<id>/{annotated.mp4, poster.jpg, events.json, risk.json}` | `scripts/render_samples.py` | Home, Results, Demo examples, Dashboard |
 | `results/gallery.json` | `scripts/render_samples.py` (per class, the event that best matches a dev label) | Results |
 | `results/failures.json` + `results/failures/*.mp4` | `scripts/render_failures.py` | Results |
-| `dashboard/event_heat.png` | optional, not generated (the section hides itself) | Dashboard |
+| `dashboard/event_heat.jpg` | `scripts/event_heat.py` (the tracks behind each event, from the rules on the caches) | Dashboard |
 | `scene_overlay.jpg` | `scripts/render_scene.py --out web/public/data/scene_overlay.jpg` | Approach |
 | `team.json` (+ photos in `team/`) | by hand | Team |
 | `report.json` | `scripts/write_report.py` (prose in the script, numbers from the files above) | Report |

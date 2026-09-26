@@ -8,6 +8,7 @@
 #   report.json    the report page, numbers from the files above (scripts/write_report.py)
 #   eda/           charts and overlays from the track caches (scripts/eda.py)
 #   results/       annotated samples, gallery clips, failure cases (render_samples.py, render_failures.py)
+#   dashboard/     where the events happen (scripts/event_heat.py)
 #
 # Needs the sample videos (default samples/) and their track caches (cache/tracks/). Rendering the
 # full-length samples takes about 20 minutes on a laptop CPU.
@@ -30,4 +31,5 @@ cp predictions_samples.json "$DATA/predictions_samples.json"
 rm -rf "$DATA/results"  # clips of classes the new run no longer has must not linger
 "$PY" scripts/render_samples.py "$VIDEOS" --predictions predictions_samples.json ${TIMING[@]+"${TIMING[@]}"}
 "$PY" scripts/render_failures.py "$VIDEOS" --predictions predictions_samples.json
+"$PY" scripts/event_heat.py --predictions predictions_samples.json
 du -sh "$DATA"/results/*/ "$DATA"/eda

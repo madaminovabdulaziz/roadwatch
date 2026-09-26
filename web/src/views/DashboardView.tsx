@@ -80,10 +80,13 @@ export default function DashboardView() {
 
       {heatOk && (
         <Section title="Where events happen">
+          <p className="mb-3 text-sm text-zinc-400">
+            The paths of the road users behind each event, while the rule held for them, on the reference frame.
+          </p>
           {/* eslint-disable-next-line @next/next/no-img-element -- static export, plain img */}
           <img
-            src="/data/dashboard/event_heat.png"
-            alt="Event locations on the reference frame"
+            src="/data/dashboard/event_heat.jpg"
+            alt="Paths of the road users behind each event on the reference frame"
             className="w-full rounded-xl border border-white/10"
             loading="lazy"
             onError={() => setHeatOk(false)}
