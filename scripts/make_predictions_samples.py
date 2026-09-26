@@ -4,13 +4,19 @@ Writes predictions_samples.json at the repository root (a task deliverable), val
 evaluate.py, and copies it to web/public/data/ for the Links page. With --check it instead compares a
 fresh run against the committed file (events exact, risk within 1e-6): the reproducibility claim.
 
-Usage: python scripts/make_predictions_samples.py [samples/] [--check]
+--unpaced runs the harness with configs/unpaced.yaml (pacing off). On a machine too slow for the 3x
+budget (Kaggle's 4 cores: 2.7x with pacing) the pipeline thins its work by wall-clock time, so its
+output depends on the machine. Unpaced, the output is the deterministic full-quality one that any
+machine fast enough to finish inside the budget reproduces exactly (SPEC §12.54).
+
+Usage: python scripts/make_predictions_samples.py [samples/] [--check] [--unpaced]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -32,7 +38,11 @@ def main() -> int:
     ap.add_argument("videos", type=Path, nargs="?", default=REPO_ROOT / "samples")
     ap.add_argument("--check", action="store_true", help="compare a fresh run with the committed file")
     ap.add_argument("--out", type=Path, default=TARGET)
+    ap.add_argument("--unpaced", action="store_true", help="pacing off (configs/unpaced.yaml)")
     args = ap.parse_args()
+    if args.unpaced:
+        # the harness subprocess inherits the environment
+        os.environ["ROADWATCH_OVERRIDES"] = str(REPO_ROOT / "configs" / "unpaced.yaml")
 
     if args.check:
         if not args.out.exists():

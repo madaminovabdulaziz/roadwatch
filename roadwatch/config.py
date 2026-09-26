@@ -2,7 +2,8 @@
 
 Contract:
 - `load_thresholds()` returns configs/thresholds.yaml parsed once per process (treat it as read-only),
-  with the optional ROADWATCH_OVERRIDES file deep-merged on top (demo backend only).
+  with the optional ROADWATCH_OVERRIDES file deep-merged on top (demo backend and
+  make_predictions_samples.py --unpaced only).
 - `class_cfg(label)` returns one class block; `enabled_classes()` lists labels with `enabled: true`.
 - `seed_everything()` fixes random/numpy/torch seeds and the deterministic CUDA flags (CLAUDE.md rule 6).
 - `get_device()` returns "cuda" when available, else "cpu"; the ROADWATCH_DEVICE env var overrides it.
@@ -33,7 +34,8 @@ def load_thresholds(path: Path = THRESHOLDS_PATH) -> dict[str, Any]:
     """Parse the tunables file once; the returned dict is shared, so never mutate it.
 
     If the ROADWATCH_OVERRIDES env var names a YAML file, it is deep-merged on top. Only the demo
-    backend sets it (a CPU profile, demo/config.yaml); the submission never does.
+    backend (a CPU profile, demo/config.yaml) and `make_predictions_samples.py --unpaced` (pacing off,
+    configs/unpaced.yaml) set it; the submission never does.
     """
     with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)

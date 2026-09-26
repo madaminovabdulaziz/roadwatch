@@ -129,3 +129,18 @@ def test_official_harness_writes_valid_predictions(tiny_video: Path, tmp_path: P
         timeout=60,
     )
     assert check.returncode == 0, check.stdout
+
+
+def test_the_unpaced_profile_only_switches_pacing_off() -> None:
+    # make_predictions_samples.py --unpaced (SPEC §12.54): same pipeline, no wall-clock thinning
+    import yaml
+
+    from roadwatch.config import CONFIG_DIR, deep_merge, load_thresholds
+
+    base = load_thresholds()
+    extra = yaml.safe_load((CONFIG_DIR / "unpaced.yaml").read_text(encoding="utf-8"))
+    merged = deep_merge(base, extra)
+    assert set(extra) == {"runtime", "risk"}
+    assert merged["runtime"]["perception_budget_factor"] >= 100
+    assert merged["risk"]["total_budget_factor"] >= 100 and merged["risk"]["budget_factor"] >= 100
+    assert merged["classes"] == base["classes"] and merged["perception"] == base["perception"]

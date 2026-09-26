@@ -1,0 +1,11 @@
+# Pacing off: every scheduled frame is processed whatever the machine's speed (SPEC §12.54).
+# `make_predictions_samples.py --unpaced` runs the official harness with this file (through
+# ROADWATCH_OVERRIDES) to write the full-quality output that a machine fast enough to finish inside the
+# budget produces. The submission never sets it: on a slow machine pacing is what keeps a video under 3x.
+runtime:
+  part_a_deadline_factor: 1000.0
+  perception_budget_factor: 1000.0
+risk:
+  budget_factor: 1000.0
+  budget_slack_sec: 1000.0
+  total_budget_factor: 1000.0
