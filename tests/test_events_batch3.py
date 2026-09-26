@@ -6,6 +6,7 @@ Uses the batch 1 scene (10 px per metre, road y = 20-60 m, eastbound lanes e1/e2
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from roadwatch.events import accident, near_miss, road_obstacle
 from roadwatch.features import add_kinematics
@@ -214,3 +215,47 @@ def test_a_shock_in_a_tracks_first_second_is_not_a_crash() -> None:
     x = np.where(ta < 5.4, 100 + 12 * (ta - 5.0), 104.8)
     revealed = track(2, appears, x, 45.5, cls="bus", w_px=80, h_px=40)
     assert accident.detect(kin(passing, revealed), SCENE, ctx(12), cfg("accident")) == []
+
+
+# ------------------------------------------------ accident false positives on real traffic (SPEC §12.53)
+def test_far_from_the_camera_measurement_noise_is_not_a_crash() -> None:
+    # C3902 1:11: two vehicles 60+ m away, where one 4K pixel is 10-24 cm of road: their boxes touch
+    # in the image and a -60 m/s^2 "stop" is box jitter. That part of the road is not judged at all.
+    coarse = Scene({**SCENE.layers, "image_size": [3840, 2160]})  # 10 px/m -> 0.1 m per 4K pixel
+    a, b = t_bone()
+    tt = add_kinematics(pd.concat([a, b], ignore_index=True).astype(TRACK_DTYPES), coarse)
+    assert accident.detect(tt, coarse, ctx(20), cfg("accident")) == []
+
+
+def test_a_pedestrian_weaving_past_a_stopped_car_is_not_a_crash() -> None:
+    # C3905 1:42: a person walks between the cars of a stopped column, turning as people do; the
+    # boxes overlap and the stopped car's heading jitters. Turns only mean something for a moving vehicle.
+    f = frames(0, 12)
+    t = f / FPS
+    car = track(1, f, 110, 45)
+    walker = track(2, f, 108 + 0.8 * np.sin(2 * t), 43 + 0.3 * t, cls="person", w_px=8, h_px=17)
+    assert accident.detect(kin(car, walker), SCENE, ctx(12), cfg("accident")) == []
+
+
+def test_a_single_vehicle_that_drives_on_did_not_crash() -> None:
+    # C3902 3:50: an articulated bus's box jumps while it turns: 10 m/s -> 1 m/s "off the lanes" in a
+    # second, then it drives on. A crashed vehicle does not drive away.
+    f = frames(0, 12)
+    t = f / FPS
+    v = np.where(t < 4.0, 10.0, np.where(t < 5.0, 0.3, 6.0))
+    x = 50 + np.concatenate([[0.0], np.cumsum(v[1:] * np.diff(t))])
+    assert accident.detect(kin(track(1, f, x, 70, cls="bus", w_px=80)), SCENE, ctx(12), cfg("accident")) == []
+
+
+def test_an_id_switch_is_one_object_not_a_collision() -> None:
+    # C3902 4:01: the tracker drops a car and re-identifies it as a new track in the same place; for a
+    # frame or two both ids exist, "touch", and the old box's last samples look like a hard stop.
+    f = frames(0, 12)
+    t = f / FPS
+    x = 60 + 8 * t
+    old, new = kin(track(1, f[t <= 6.1], x[t <= 6.1], 45)), kin(track(2, f[t >= 5.9], x[t >= 5.9], 45))
+    assert accident.continuation(old, new, cfg("accident")["params"])
+    other = kin(track(3, f[t >= 5.9], x[t >= 5.9], 52))  # a different car, 7 m to the side
+    assert not accident.continuation(old, other, cfg("accident")["params"])
+    later = kin(track(4, f[t >= 8.0], x[t >= 8.0], 45))  # appears 2 s later: not a re-identification
+    assert not accident.continuation(old, later, cfg("accident")["params"])

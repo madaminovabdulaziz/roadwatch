@@ -32,7 +32,7 @@ import pandas as pd
 
 from roadwatch.events.base import VideoContext
 from roadwatch.events.common import by_track, group_members, in_group, midpoint_gap, runs
-from roadwatch.scene.scene import Scene
+from roadwatch.scene.scene import Scene, ground_scale
 from roadwatch.types import Segment
 
 LABEL = "accident"
@@ -80,8 +80,11 @@ def shocks(rows: pd.DataFrame, t0: float, p: dict[str, Any]) -> set[str]:
     if (rows["accel"].to_numpy()[near] < -p["shock_decel_mps2"]).any():
         kinds.add("decel")
     heading = rows["heading_deg"].to_numpy(dtype=np.float64)
-    ok = np.isfinite(heading)
-    if ok.sum() >= 2:
+    # a sudden turn means something only for a moving vehicle: a stopped car's heading is jitter and
+    # pedestrians turn all the time (their fall is the "fall" shock below) (SPEC §12.53)
+    moving = rows["speed"].to_numpy(dtype=np.float64) >= p["shock_heading_min_speed_mps"]
+    ok = np.isfinite(heading) & moving
+    if ok.sum() >= 2 and str(rows["cls"].iloc[0]) in group_members("vehicles", "two_wheelers"):
         unwrapped = np.full(len(t), np.nan)
         unwrapped[ok] = np.degrees(np.unwrap(np.radians(heading[ok])))
         for k in np.flatnonzero(near & ok):
@@ -148,8 +151,15 @@ def end_time(tracks: list[pd.DataFrame], t0: float, p: dict[str, Any]) -> float:
 
 
 def single_vehicle(rows: pd.DataFrame, p: dict[str, Any]) -> list[tuple[float, float]]:
-    """(start, stop) times of abrupt stops from speed off the lanes or off the road."""
+    """(start, stop) times of abrupt stops from speed off the lanes or off the road.
+
+    Only from the track's settled part (not its first shock_min_track_age_sec, when a box being revealed
+    races ahead and stops), and confirmed like a pair crash: the vehicle then stays below
+    confirm_speed_mps for confirm_stopped_sec. An articulated bus whose box jumps while it turns, and
+    which then drives on, did not crash (SPEC §12.53).
+    """
     t = rows["t"].to_numpy()
+    settled_from = t.min() + p["shock_min_track_age_sec"]
     speed = rows["speed"].to_numpy(dtype=np.float64)
     off = (rows["lane_id"].to_numpy() == "") | ~rows["on_road"].to_numpy()
     out = []
@@ -159,7 +169,7 @@ def single_vehicle(rows: pd.DataFrame, p: dict[str, Any]) -> list[tuple[float, f
             j = np.flatnonzero(
                 (t > t[k]) & (t <= t[k] + p["single_window_sec"]) & (speed < p["single_speed_after_mps"])
             )
-            if len(j) and off[j[0]]:
+            if len(j) and off[j[0]] and t[k] >= settled_from and _stays_stopped(t, speed, int(j[0]), p):
                 start = int(np.argmax(speed[k : j[0] + 1])) + k  # the last fast moment before the drop
                 out.append((float(t[start]), float(t[j[0]])))
                 k = int(j[0]) + 1
@@ -168,11 +178,28 @@ def single_vehicle(rows: pd.DataFrame, p: dict[str, Any]) -> list[tuple[float, f
     return out
 
 
+def _stays_stopped(t: np.ndarray, speed: np.ndarray, i: int, p: dict[str, Any]) -> bool:
+    """Whether the track stays under confirm_speed_mps for confirm_stopped_sec from sample i."""
+    after = (t >= t[i]) & (t <= t[i] + p["confirm_stopped_sec"])
+    return bool((speed[after] < p["confirm_speed_mps"]).all())
+
+
+def continuation(a: pd.DataFrame, b: pd.DataFrame, p: dict[str, Any]) -> bool:
+    """Whether one track is the other re-identified: it starts within reid_max_gap_sec of the other's
+    end, where the other was last seen (within contact_dist_m). Such a pair is one object (SPEC §12.53)."""
+    first, last = (a, b) if a["t"].min() <= b["t"].min() else (b, a)
+    end, start = first.loc[first["t"].idxmax()], last.loc[last["t"].idxmin()]
+    close = float(np.hypot(end["X"] - start["X"], end["Y"] - start["Y"])) <= p["contact_dist_m"]
+    return bool(abs(float(start["t"]) - float(end["t"])) <= p["reid_max_gap_sec"] and close)
+
+
 def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any]) -> list[Segment]:
     if tt.empty:
         return []
     p = cfg["params"]
-    valid = tt[tt["kin_valid"].to_numpy()]
+    # only where the road is measured finely enough: far away a -60 m/s^2 "stop" is box jitter (§12.53)
+    measurable = ground_scale(scene, tt[["fx", "fy"]].to_numpy(dtype=np.float64)) <= p["max_ground_m_per_px"]
+    valid = tt[tt["kin_valid"].to_numpy() & measurable]
     tracks = dict(by_track(valid))
     last_rows = tt.sort_values(["track_id", "t"], kind="stable").groupby("track_id", sort=True).tail(1)
     exits = set(last_rows.loc[last_rows["at_edge"].to_numpy(dtype=bool), "track_id"].astype(int))
@@ -182,6 +209,8 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     segments = []
     for (a, b), t0 in sorted(contacts(valid, p).items(), key=lambda kv: kv[1]):
         pair = [tracks[a], tracks[b]]
+        if continuation(pair[0], pair[1], p):
+            continue  # one object re-identified by the tracker, not two colliding
         kinds = shocks(pair[0], t0, p) | shocks(pair[1], t0, p)
         if not kinds or not confirmed(pair, t0, kinds, p, exits):
             continue

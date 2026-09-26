@@ -120,7 +120,7 @@ postprocess:                  # SPEC §6; per-class values below override these 
 
 classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
   accident:
-    enabled: false
+    enabled: true
     min_score: 0.5
     merge_gap: 1.0
     min_dur: 0.8
@@ -131,6 +131,9 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       shock_heading_deg: 30.0
       shock_heading_window_sec: 1.0
       shock_min_track_age_sec: 1.0  # no braking/heading shock from a track's first second (a box being revealed)
+      shock_heading_min_speed_mps: 3.0  # a sudden turn counts only for a vehicle moving at least this fast
+      reid_max_gap_sec: 0.5       # a track starting this soon where another ended is that track re-identified
+      max_ground_m_per_px: 0.08   # judged only where one 4K-equivalent pixel is at most this much road (§12.53)
       confirm_stopped_sec: 3.0
       single_speed_before_mps: 8.0
       single_speed_after_mps: 1.0
