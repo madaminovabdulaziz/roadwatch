@@ -141,14 +141,18 @@ class JobQueue:
 
             upload = job.workdir / "input.mp4"
             job.started, job.status = time.time(), "running"
+            result, message = None, ""
             try:
-                job.result = self.processor(upload, job.workdir, progress)
-                job.status, job.progress = "done", 100.0
+                result = self.processor(upload, job.workdir, progress)
             except (BadInput, JobTimeout) as exc:
-                job.status, job.message = "error", str(exc)
+                message = str(exc)
             except Exception:
                 log.exception("job %s failed", job.id)
-                job.status, job.message = "error", "processing failed on our side; please try another clip"
-            finally:
-                if job.result is None or Path(job.result.get("video_path", "")) != upload:
-                    upload.unlink(missing_ok=True)
+                message = "processing failed on our side; please try another clip"
+            # clean up first, then publish: a finished job never still holds its upload
+            if result is None or Path(result.get("video_path", "")) != upload:
+                upload.unlink(missing_ok=True)
+            if result is not None:
+                job.result, job.progress, job.status = result, 100.0, "done"
+            else:
+                job.message, job.status = message, "error"
