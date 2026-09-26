@@ -1,34 +1,82 @@
 {
- "members": [
-  {
-   "name": "",
-   "role": "Integrator & perception",
-   "built": [],
-   "photo": "",
-   "github": "",
-   "linkedin": "",
-   "portfolio": "",
-   "projects": []
-  },
-  {
-   "name": "",
-   "role": "Scene, labels, rules & risk",
-   "built": [],
-   "photo": "",
-   "github": "",
-   "linkedin": "",
-   "portfolio": "",
-   "projects": []
-  },
-  {
-   "name": "",
-   "role": "Web, EDA & renders",
-   "built": [],
-   "photo": "",
-   "github": "",
-   "linkedin": "",
-   "portfolio": "",
-   "projects": []
-  }
- ]
+  "members": [
+    {
+      "name": "Abdulaziz",
+      "role": "Perception, pipeline & website",
+      "built": [],
+      "photo": "team/abdulaziz.png",
+      "github": "",
+      "linkedin": "",
+      "portfolio": "",
+      "projects": [],
+      "affiliations": [
+        {
+          "name": "WIUT",
+          "logo": "team/wiut.jpeg"
+        },
+        {
+          "name": "University of Roehampton",
+          "logo": "team/roehampton.svg"
+        },
+        {
+          "name": "CADIS",
+          "logo": "team/cadis.png",
+          "logoLayout": "padded-square"
+        },
+        {
+          "name": "Avilingo",
+          "logo": "team/avilingo.png",
+          "logoLayout": "padded-square"
+        },
+        {
+          "name": "Silkroad",
+          "logo": "team/silkroad.webp"
+        },
+        {
+          "name": "UZ Combinator",
+          "logo": "team/uz-combinator.png"
+        }
+      ]
+    },
+    {
+      "name": "Shokhzod",
+      "role": "Scene calibration, event rules & risk",
+      "built": [],
+      "photo": "team/shokhzod.png",
+      "github": "",
+      "linkedin": "",
+      "portfolio": "",
+      "projects": [],
+      "affiliations": [
+        {
+          "name": "WIUT",
+          "logo": "team/wiut.jpeg"
+        },
+        {
+          "name": "Toshisoft",
+          "logo": "team/toshisoft.png"
+        },
+        {
+          "name": "Kasbon",
+          "logo": "team/kasbon.png"
+        }
+      ]
+    },
+    {
+      "name": "Husanxon",
+      "role": "Data labelling",
+      "built": [],
+      "photo": "team/husanxon.png",
+      "github": "",
+      "linkedin": "",
+      "portfolio": "",
+      "projects": [],
+      "affiliations": [
+        {
+          "name": "WIUT",
+          "logo": "team/wiut.jpeg"
+        }
+      ]
+    }
+  ]
 }
