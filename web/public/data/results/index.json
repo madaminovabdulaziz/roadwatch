@@ -7,7 +7,8 @@
    "video": "results/C3902/annotated.mp4",
    "poster": "results/C3902/poster.jpg",
    "events": "results/C3902/events.json",
-   "risk": "results/C3902/risk.json"
+   "risk": "results/C3902/risk.json",
+   "preview": "results/C3902/preview.mp4"
   },
   {
    "id": "C3905",
@@ -16,7 +17,8 @@
    "video": "results/C3905/annotated.mp4",
    "poster": "results/C3905/poster.jpg",
    "events": "results/C3905/events.json",
-   "risk": "results/C3905/risk.json"
+   "risk": "results/C3905/risk.json",
+   "preview": "results/C3905/preview.mp4"
   }
  ],
  "enabled_classes": [

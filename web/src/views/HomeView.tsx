@@ -197,7 +197,7 @@ function MachineView({
           {sample ? (
             <video
               ref={video}
-              src={`${dataUrl(sample.video)}#t=0,20`}
+              src={sample.preview ? dataUrl(sample.preview) : `${dataUrl(sample.video)}#t=0,20`}
               poster={sample.poster ? dataUrl(sample.poster) : undefined}
               muted
               loop

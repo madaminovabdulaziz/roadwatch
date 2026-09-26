@@ -1,9 +1,9 @@
 """Annotated sample videos and results data for the website (RUNBOOK P2.3, web/README.md "Data").
 
 For every sample with a track cache, writes web/public/data/results/<id>/: annotated.mp4 (720p H.264),
-poster.jpg, events.json ([[start, end, label], ...]) and risk.json ([[t, score], ...]); one short clip
-per detected class (2 s before -> 2 s after the event that best matches a dev label of its class, else
-its first event) for the gallery (results/gallery.json);
+preview.mp4 (its first 20 s, for the home page), poster.jpg, events.json ([[start, end, label], ...])
+and risk.json ([[t, score], ...]); one short clip per detected class (2 s before -> 2 s after the event
+that best matches a dev label of its class, else its first event) for the gallery (results/gallery.json);
 and results/index.json.
 
 Events, in order of preference:
@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,7 @@ CLIP_PAD_SEC = 2.0
 # full-length 720p samples at the demo's crf 23 run to ~17 MB per minute (C3902: 88 MB); crf 28 with the
 # slower preset halves that with the overlay text still sharp, so the page loads on a phone
 WEB_CRF, WEB_PRESET = 28, "medium"
+PREVIEW_SEC = 20.0  # the home page loops this much of the first sample; ~3 MB instead of streaming 50 MB
 POSTER_HEIGHT = 720
 
 
@@ -79,6 +81,16 @@ def gallery_picks(events: dict[str, list[list]], gt: dict[str, Any]) -> dict[str
             if ev[2] not in best or score > best[ev[2]][0]:
                 best[ev[2]] = (score, name, ev)
     return {label: (name, ev) for label, (_, name, ev) in best.items()}
+
+
+def cut_preview(annotated: Path, out: Path, seconds: float = PREVIEW_SEC) -> None:
+    """The first `seconds` of an annotated video, copied without re-encoding (same look, a fraction of the
+    bytes) with the index up front, for a looping preview."""
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(annotated), "-t", str(seconds), "-c", "copy", "-an"]
+        + ["-movflags", "+faststart", str(out)],
+        check=True,
+    )
 
 
 def save_poster(video: Path, t: float, out: Path) -> None:
@@ -163,6 +175,7 @@ def main() -> int:
             crf=WEB_CRF,
             preset=WEB_PRESET,
         )
+        cut_preview(folder / "annotated.mp4", folder / "preview.mp4")
         save_poster(video, events[0][0] if events else 0.0, folder / "poster.jpg")
         (folder / "events.json").write_text(json.dumps(events) + "\n", encoding="utf-8")
         (folder / "risk.json").write_text(json.dumps(risk) + "\n", encoding="utf-8")
@@ -173,6 +186,7 @@ def main() -> int:
                 "duration": round(meta.duration, 3),
                 "video": f"results/{stem}/annotated.mp4",
                 "poster": f"results/{stem}/poster.jpg",
+                "preview": f"results/{stem}/preview.mp4",
                 "events": f"results/{stem}/events.json",
                 "risk": f"results/{stem}/risk.json",
             }

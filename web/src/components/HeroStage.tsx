@@ -6,7 +6,7 @@ import { dataUrl } from "@/lib/data";
 /**
  * Home hero: the raw camera footage full-bleed behind one headline.
  * The poster paints first; the loop (scripts/hero_clip.sh) starts only when motion is welcome and the
- * connection is not in Save-Data mode, and phones get the 720p encode.
+ * connection is not in Save-Data mode, and phones get the 480p encode.
  */
 export default function HeroStage() {
   const video = useRef<HTMLVideoElement>(null);
@@ -22,7 +22,7 @@ export default function HeroStage() {
     ).connection?.saveData;
     if (motion.matches || saveData) return;
     player.src = dataUrl(
-      window.innerWidth <= 900 ? "hero/hero-720.mp4" : "hero/hero-1080.mp4",
+      window.innerWidth <= 900 ? "hero/hero-480.mp4" : "hero/hero-720.mp4",
     );
     setEnabled(true);
     void player.play().catch(() => undefined);

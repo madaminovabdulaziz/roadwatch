@@ -51,6 +51,7 @@ export interface ResultVideo {
   name: string;
   duration: number;
   video: string; // annotated H.264 MP4
+  preview?: string; // its first 20 s (home page loop)
   poster?: string;
   events: string; // JSON: EventTuple[]
   risk: string; // JSON: RiskPoint[]
