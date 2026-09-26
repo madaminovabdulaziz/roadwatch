@@ -6,6 +6,7 @@
 #
 #   metrics.json   evaluate.py on the submission run vs labels/dev_gt.json (scripts/eval_dev.py --pred)
 #   report.json    the report page, numbers from the files above (scripts/write_report.py)
+#   ablations.json ablations and error analysis on the dev labels (scripts/write_ablations.py)
 #   eda/           charts and overlays from the track caches (scripts/eda.py)
 #   results/       annotated samples, gallery clips, failure cases (render_samples.py, render_failures.py)
 #   dashboard/     where the events happen (scripts/event_heat.py)
@@ -27,6 +28,7 @@ TIMING=()
 cp predictions_samples.json "$DATA/predictions_samples.json"
 "$PY" scripts/eval_dev.py --pred predictions_samples.json | tail -n 3
 "$PY" scripts/write_report.py ${TIMING[@]+"${TIMING[@]}"}
+"$PY" scripts/write_ablations.py
 "$PY" scripts/eda.py "$VIDEOS"
 rm -rf "$DATA/results"  # clips of classes the new run no longer has must not linger
 "$PY" scripts/render_samples.py "$VIDEOS" --predictions predictions_samples.json ${TIMING[@]+"${TIMING[@]}"}

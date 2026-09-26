@@ -1,0 +1,216 @@
+{
+ "ablations": [
+  {
+   "title": "Frame rate",
+   "metric": "dev Score A",
+   "rows": [
+    {
+     "variant": "every 3rd frame (10 Hz), as submitted",
+     "value": 0.518
+    },
+    {
+     "variant": "frames thinned by the old pacer (4-core Kaggle T4)",
+     "value": 0.421
+    }
+   ],
+   "takeaway": "Tracking at 10 Hz matters: when the old pacer dropped frames to save time, tracks broke and a fifth of the score went. The pacer now thins only when a run would overrun.",
+   "source": "measured: evaluate.py on predictions_samples.json and runs/kaggle_t4_official.json (SPEC \u00a712.56)"
+  },
+  {
+   "title": "Occlusion guard for line crossings",
+   "metric": "solid_line_crossing mean F1 (dev)",
+   "rows": [
+    {
+     "variant": "with the guard",
+     "value": 1.0
+    },
+    {
+     "variant": "without it",
+     "value": 0.667
+    }
+   ],
+   "takeaway": "A bus half hidden behind another has a box that ends at the other bus's roof; its footprint slid across a solid line. Footprints a nearer vehicle covers no longer count.",
+   "source": "measured: Part A on the track caches, with and without the guard (SPEC \u00a712.55)"
+  },
+  {
+   "title": "Part B: what counts as a conflict",
+   "metric": "false alarms in 7.4 min of accident-free traffic",
+   "rows": [
+    {
+     "variant": "collision course between box centres",
+     "value": 31
+    },
+    {
+     "variant": "bumper gaps, lane-aware path, emergency braking needed",
+     "value": 2
+    }
+   ],
+   "takeaway": "Queues closing up, side-by-side lanes and far-away jitter all looked like collision courses. A conflict now has to need emergency braking, measured where the camera resolves it.",
+   "source": "recorded: SPEC \u00a712.47 (the old risk features no longer exist)"
+  },
+  {
+   "title": "failure_to_yield: what 'on the crossing' means",
+   "metric": "false positives on the dev videos",
+   "rows": [
+    {
+     "variant": "anyone inside the zebra polygon",
+     "value": 51
+    },
+    {
+     "variant": "on its roadway part, in the vehicle's path, cars/buses/trucks only",
+     "value": 8
+    }
+   ],
+   "takeaway": "The zebras' ends lie on the kerb and the island, where people wait all day.",
+   "source": "recorded: SPEC \u00a712.49"
+  },
+  {
+   "title": "near_miss: trigger",
+   "metric": "false near misses on the dev videos (the samples contain none)",
+   "rows": [
+    {
+     "variant": "collision course + hard braking",
+     "value": 23
+    },
+    {
+     "variant": "Part B's conflict test + the mover's own braking",
+     "value": 4
+    }
+   ],
+   "takeaway": "Better, but 4 false events in 7.4 min with no real near miss to measure recall on: the class stays off rather than risk adding a zero class to the score.",
+   "source": "recorded: SPEC \u00a712.52 and \u00a712.57"
+  },
+  {
+   "title": "Rejected: jaywalking only in the near field",
+   "metric": "jaywalking mean F1 (dev)",
+   "rows": [
+    {
+     "variant": "whole carriageway (kept)",
+     "value": 0.444
+    },
+    {
+     "variant": "only where 1 px <= 8 cm of road",
+     "value": 0.412
+    }
+   ],
+   "takeaway": "It split a long merged event but lost a real one; people waiting in the kerb lane are on the road by the definition, so the rule was kept as it is.",
+   "source": "recorded: SPEC \u00a712.55"
+  }
+ ],
+ "errors": {
+  "match_tiou": 0.3,
+  "confusion": {
+   "labelled": [
+    "failure_to_yield",
+    "illegal_u_turn",
+    "jaywalking",
+    "red_light",
+    "solid_line_crossing",
+    "stop_line",
+    "stopped_vehicle",
+    "none"
+   ],
+   "predicted": [
+    "failure_to_yield",
+    "jaywalking",
+    "red_light",
+    "solid_line_crossing",
+    "stop_line",
+    "none"
+   ],
+   "counts": [
+    [
+     11,
+     0,
+     0,
+     0,
+     0,
+     3
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     0,
+     1
+    ],
+    [
+     1,
+     9,
+     0,
+     0,
+     0,
+     5
+    ],
+    [
+     0,
+     0,
+     1,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     1,
+     0,
+     0,
+     0,
+     5
+    ],
+    [
+     6,
+     10,
+     0,
+     0,
+     0,
+     0
+    ]
+   ]
+  },
+  "boundaries": {
+   "failure_to_yield": {
+    "n": 11,
+    "start_median_sec": 0.0,
+    "end_median_sec": 0.04
+   },
+   "jaywalking": {
+    "n": 10,
+    "start_median_sec": -0.24,
+    "end_median_sec": -0.76
+   },
+   "red_light": {
+    "n": 1,
+    "start_median_sec": 0.07,
+    "end_median_sec": -1.93
+   },
+   "solid_line_crossing": {
+    "n": 1,
+    "start_median_sec": -0.24,
+    "end_median_sec": 2.07
+   },
+   "stop_line": {
+    "n": 1,
+    "start_median_sec": -1.86,
+    "end_median_sec": -0.12
+   }
+  }
+ }
+}

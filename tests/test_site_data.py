@@ -63,3 +63,32 @@ def test_event_map_draws_each_path_in_its_class_colour() -> None:
     assert img.shape == (1080, 1920, 3)
     b, g, r = img[900, 1000].tolist()
     assert g > 180 and b < 120 and r < 120  # the path, green over the dimmed frame
+
+
+def test_error_analysis_confusion_and_boundary_offsets() -> None:
+    from scripts import write_ablations
+
+    gt = {
+        "a.mp4": {
+            "events": [[10.0, 20.0, "jaywalking"], [30.0, 32.0, "red_light"], [50.0, 55.0, "stop_line"]]
+        }
+    }
+    videos = {
+        "a.mp4": {
+            "events": [
+                [10.5, 19.0, "jaywalking"],  # right class, starts 0.5 s late, ends 1 s early
+                [30.0, 32.0, "stop_line"],  # the red-light runner read as a stop-line violation
+                [80.0, 82.0, "jaywalking"],  # on unlabelled time
+            ]
+        }
+    }
+    errors = write_ablations.error_analysis(gt, videos)
+    c = errors["confusion"]
+    cell = {
+        (g, p): n
+        for g, row in zip(c["labelled"], c["counts"], strict=False)
+        for p, n in zip(c["predicted"], row, strict=False)
+    }
+    assert cell[("jaywalking", "jaywalking")] == 1 and cell[("red_light", "stop_line")] == 1
+    assert cell[("stop_line", "none")] == 1 and cell[("none", "jaywalking")] == 1
+    assert errors["boundaries"]["jaywalking"] == {"n": 1, "start_median_sec": 0.5, "end_median_sec": -1.0}
