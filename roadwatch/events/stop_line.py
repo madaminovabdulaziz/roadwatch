@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, in_group, past_line_m, runs, signal_states
+from roadwatch.events.common import by_track, in_group, last_seen, past_line_m, runs, signal_states
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -51,7 +51,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
         line = np.asarray(sl["line"], dtype=np.float64)
         greens = sorted(t0 for t0, _, state in timeline if state == "green")
         for oid, rows in by_track(v, key="obj_id"):
-            last_lane = rows["lane_id"].replace("", np.nan).ffill().fillna("").to_numpy()
+            last_lane = last_seen(rows["lane_id"].to_numpy())
             mine = np.isin(last_lane, lanes)
             if not mine.any():
                 continue

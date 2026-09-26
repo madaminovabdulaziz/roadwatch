@@ -78,6 +78,18 @@ def runs(t: np.ndarray, mask: np.ndarray, gap: float) -> list[tuple[int, int]]:
     return out
 
 
+def last_seen(labels: np.ndarray) -> np.ndarray:
+    """Each row's most recent non-empty label ("" before the first), e.g. the last lane a track was in.
+
+    A numpy forward fill: pandas' replace-then-ffill on strings warns about a future downcasting change
+    once per call, which filled the organizers' log.
+    """
+    labels = np.asarray(labels, dtype=object)
+    idx = np.where(labels != "", np.arange(len(labels)), -1)
+    np.maximum.accumulate(idx, out=idx)
+    return np.where(idx >= 0, labels[np.maximum(idx, 0)], "")
+
+
 def by_track(tt: pd.DataFrame, key: str = "track_id") -> Iterator[tuple[int, pd.DataFrame]]:
     for tid, rows in tt.sort_values([key, "t"], kind="stable").groupby(key, sort=True):
         yield int(tid), rows.reset_index(drop=True)

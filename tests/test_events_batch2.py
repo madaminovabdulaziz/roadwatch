@@ -371,3 +371,21 @@ def test_turn_end_ignores_unknown_yaw_before_the_peak() -> None:
     heading = np.array([0.0, np.nan, 5.0, 40.0, 70.0, 90.0])
     end = _turn_end(t, yaw, heading, 0, 4, cfg("illegal_turn")["params"], gap=0.15)
     assert end == pytest.approx(0.45)  # midway between the last turning sample (0.4) and the calm one (0.5)
+
+
+def test_last_seen_lane_fills_forward_without_pandas_warnings() -> None:
+    import warnings
+
+    from roadwatch.events.common import last_seen
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the pandas version warned on every stop_line call
+        assert last_seen(np.array(["", "e1", "", "", "e2", ""], dtype=object)).tolist() == [
+            "",
+            "e1",
+            "e1",
+            "e1",
+            "e2",
+            "e2",
+        ]
+        assert last_seen(np.array([], dtype=object)).tolist() == []
