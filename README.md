@@ -4,11 +4,14 @@ Traffic event detection (Part A) and accident anticipation (Part B) for one fixe
 WIUT Hackathon 2026 computer-vision elimination task. `solution.py` is the organizers' interface; the logic
 lives in the `roadwatch/` package.
 
-> Status: the whole pipeline is written and tested on synthetic tracks: perception, kinematics, scene
-> geometry, signal-lamp timeline, 13 event rules, post-processing, Part B risk, rendering, website and demo.
-> Every class stays disabled in `configs/thresholds.yaml` until it passes the enable policy
-> (`docs/SPEC.md` §7) on the labelled samples, so the submitted event list is empty for now; Part B runs
-> only once `configs/scene.json` (with its homography) is calibrated.
+> Status: the scene is calibrated and 8 of the 14 classes are enabled, each after it passed the enable
+> policy on our labelled samples (`docs/SPEC.md` §7, decisions §12.52–§12.55): accident, red_light,
+> wrong_way, jaywalking, failure_to_yield, solid_line_crossing, stop_line, road_obstacle. The official
+> `evaluate.py` scores the submission's run on a T4 against our labels (2 videos, 39 events) in
+> `web/public/data/metrics.json`; Part B raised 2 alarms in 7.4 min of accident-free traffic. On a Kaggle T4
+> with 4 CPU cores the official run takes about 2.7x the video length (budget 3x). The others stay off
+> because we could not show on real footage that they help: near_miss, stopped_vehicle, illegal_u_turn,
+> congestion, illegal_turn, fire_smoke (not implemented).
 
 ## Run it (what the organizers run)
 
@@ -69,11 +72,12 @@ python scripts/calibrate_scene.py --video samples/C3902.MP4   # click configs/sc
 python scripts/learn_lane_flow.py                  # lane directions from the tracks
 python scripts/labels_to_gt.py                     # labels/raw/*.csv -> labels/dev_gt.json
 python scripts/eval_dev.py                         # per-class F1 + every FP/FN with timestamps
+python scripts/risk_replay.py                      # Part B's alarms on the cached tracks, with their causes
 python scripts/tune.py --classes wrong_way         # small grid search on cached tracks
 python scripts/render_samples.py samples/ --preview-all   # look at what each rule would emit
 python scripts/check_determinism.py samples/       # two harness runs, identical output + x duration
-python scripts/make_predictions_samples.py         # the predictions_samples.json deliverable
-python scripts/eda.py samples/                     # EDA data for the website
+python scripts/make_predictions_samples.py --unpaced   # the predictions_samples.json deliverable
+bash scripts/build_site_data.sh samples/           # everything the website shows, from that file
 ```
 
 `requirements.txt` is a lock generated from `requirements.in`
@@ -113,8 +117,9 @@ development labels for the sample videos live in `labels/`.
 
 ## Assumptions
 
-- One fixed camera on a tripod; one hand-calibrated `configs/scene.json` serves every video (SPEC §12.17).
+- One fixed camera; one hand-calibrated `configs/scene.json`, registered to each recording's framing with
+  SIFT on its median background (SPEC §12.17, §12.34).
 - Frame rate is read from each file (the samples are 29.97 fps, not 25); `t_sec = frame_idx / fps`.
-- Metric scale for speeds comes from a homography on lane markings, assuming a lane width of 3.5 m and
-  urban dashed markings of about 3 m line + 9 m gap (SPEC §4).
+- Metric scale comes from the frame's own perspective: the vanishing points of the lane lines and of the
+  stop line fix the road plane, and the one assumed length is a 3.5 m lane width (SPEC §12.46).
 - Classes whose rule needs scene geometry the camera does not show are disabled, not guessed (SPEC §12.7).
