@@ -2,8 +2,8 @@
  "source": "evaluate.py: predictions_samples.json (official harness run) vs labels/dev_gt.json",
  "videos": 2,
  "gt_events": 39,
- "pred_events": 42,
- "score_a": 0.4706,
+ "pred_events": 41,
+ "score_a": 0.5182,
  "per_class": {
   "failure_to_yield": {
    "f1@0.3": 0.6875,
@@ -50,13 +50,13 @@
    ]
   },
   "solid_line_crossing": {
-   "f1@0.3": 0.6667,
-   "f1@0.5": 0.6667,
-   "f1@0.7": 0.6667,
-   "f1_mean": 0.6667,
+   "f1@0.3": 1.0,
+   "f1@0.5": 1.0,
+   "f1@0.7": 1.0,
+   "f1_mean": 1.0,
    "tp_fp_fn@0.5": [
     1,
-    1,
+    0,
     0
    ]
   },

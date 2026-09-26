@@ -69,11 +69,6 @@
      "jaywalking"
     ],
     [
-     228.044,
-     230.847,
-     "solid_line_crossing"
-    ],
-    [
      233.2,
      240.707,
      "jaywalking"
@@ -53629,17 +53624,17 @@
    "duration": 317.82,
    "budget_sec": 3178.2,
    "errors": [],
-   "part_a_sec": 334.6,
-   "part_b_sec": 648.5,
-   "total_sec": 983.1
+   "part_a_sec": 320.8,
+   "part_b_sec": 639.4,
+   "total_sec": 960.2
   },
   "C3905.MP4": {
    "duration": 127.63,
    "budget_sec": 1276.3,
    "errors": [],
-   "part_a_sec": 128.0,
-   "part_b_sec": 251.9,
-   "total_sec": 379.9
+   "part_a_sec": 124.0,
+   "part_b_sec": 251.1,
+   "total_sec": 375.1
   }
  }
 }

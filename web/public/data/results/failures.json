@@ -1,0 +1,22 @@
+[
+ {
+  "title": "People waiting in the kerb lane join crossings into one long jaywalking event",
+  "why": "At the far bus stop people wait in the kerb lane for 10-30 s. By the letter of the definition (a pedestrian on the carriageway outside a crossing) they count, but our labels did not mark them. While one of them is always there, the union across people turns four separate crossings (1:19-3:19) into one 120 s event, which matches none of them. Limiting the rule to the near field split it but lost a real event elsewhere, so we kept the rule as it is.",
+  "clip": "results/failures/jaywalking_kerb_waiters.mp4"
+ },
+ {
+  "title": "Fixed: a bus hidden behind another bus 'crossed' a solid line",
+  "why": "The green bus's box ended at the blue bus's roof, not on the road, so its footprint slid across the lane line while it stayed in its lane. A footprint whose bottom edge a nearer vehicle covers no longer counts for line crossings; this false event is gone, the real crossing on the same video is kept.",
+  "clip": "results/failures/solid_line_occlusion.mp4"
+ },
+ {
+  "title": "A bus dwelling at the far bus stop is too far away to judge",
+  "why": "The definition of a stopped vehicle (10 s or more on the carriageway, not queued at a signal) arguably includes a bus loading at the stop. There one pixel of the 4K frame is 9-16 cm of road, too coarse to tell standing from creeping reliably, so stopped_vehicle is switched off rather than guessed.",
+  "clip": "results/failures/stopped_bus_far_stop.mp4"
+ },
+ {
+  "title": "A U-turn with a 26 s pause, and no sign that forbids it",
+  "why": "The white SUV pulled into the corner at 0:48, waited 26 s for a gap and turned back at 1:17. The class is a U-turn that markings or signs prohibit; we found no such sign in this view, so no zone is drawn and illegal_u_turn is off. Our test also expects the turn within 12 s, and this one took 34 s.",
+  "clip": "results/failures/u_turn_with_pause.mp4"
+ }
+]

@@ -1,0 +1,33 @@
+{
+ "videos": [
+  {
+   "id": "C3902",
+   "name": "C3902.MP4",
+   "duration": 317.817,
+   "video": "results/C3902/annotated.mp4",
+   "poster": "results/C3902/poster.jpg",
+   "events": "results/C3902/events.json",
+   "risk": "results/C3902/risk.json"
+  },
+  {
+   "id": "C3905",
+   "name": "C3905.MP4",
+   "duration": 127.627,
+   "video": "results/C3905/annotated.mp4",
+   "poster": "results/C3905/poster.jpg",
+   "events": "results/C3905/events.json",
+   "risk": "results/C3905/risk.json"
+  }
+ ],
+ "enabled_classes": [
+  "accident",
+  "red_light",
+  "wrong_way",
+  "jaywalking",
+  "failure_to_yield",
+  "solid_line_crossing",
+  "stop_line",
+  "road_obstacle"
+ ],
+ "runtime_x_duration": 2.7
+}
