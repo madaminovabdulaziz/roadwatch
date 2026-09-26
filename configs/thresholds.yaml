@@ -270,7 +270,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     params:
       stop_speed_mps: 0.5
       stopped_sec: 1.0
-      past_line_m: 1.0            # front bumper this far past the line (covers homography error)
+      past_line_m: 2.0            # front bumper this far past the drawn line: the line sits ~0.5 m before the paint (SPEC §12.58)
       resume_speed_mps: 1.0       # moving again before green ends the event
       max_gap_sec: 3.0            # a stopped vehicle may be hidden (pedestrians) this long
 
