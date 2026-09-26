@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, group_members, in_group, runs
+from roadwatch.events.common import by_track, group_members, in_group, midpoint_gap, runs
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
 
@@ -67,9 +67,15 @@ def contacts(tt: pd.DataFrame, p: dict[str, Any]) -> dict[tuple[int, int], float
 
 
 def shocks(rows: pd.DataFrame, t0: float, p: dict[str, Any]) -> set[str]:
-    """Kinds of kinematic shock of one track within +/- shock_window_sec of t0."""
+    """Kinds of kinematic shock of one track within +/- shock_window_sec of t0.
+
+    Braking and heading shocks are not read in a track's first shock_min_track_age_sec: a new box (a
+    vehicle entering or emerging from behind another) grows while it is revealed, so its first
+    footprints race ahead and stop dead, which looks exactly like a hard stop (SPEC §12.48).
+    """
     t = rows["t"].to_numpy()
-    near = (t >= t0 - p["shock_window_sec"]) & (t <= t0 + p["shock_window_sec"])
+    settled = t >= t.min() + p["shock_min_track_age_sec"]
+    near = (t >= t0 - p["shock_window_sec"]) & (t <= t0 + p["shock_window_sec"]) & settled
     kinds = set()
     if (rows["accel"].to_numpy()[near] < -p["shock_decel_mps2"]).any():
         kinds.add("decel")
@@ -102,9 +108,9 @@ def confirmed(
 ) -> bool:
     """Whether a contact is a crash: a fall, a vehicle that stays stopped, or a track that vanishes.
 
-    A track that ends by reaching the frame edge (`exits`) just drove out of view; at this junction
-    that happens constantly, so it confirms nothing. Only a track lost mid-frame right after the
-    contact (a rider thrown down, a car knocked out of view) counts.
+    A track that ends by reaching the frame edge, or that is still there when the video ends (`exits`),
+    did not vanish, so it confirms nothing. Only a track lost mid-frame right after the contact (a rider
+    thrown down, a car knocked out of view) counts.
     """
     if "fall" in kinds:
         return True
@@ -170,6 +176,9 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     tracks = dict(by_track(valid))
     last_rows = tt.sort_values(["track_id", "t"], kind="stable").groupby("track_id", sort=True).tail(1)
     exits = set(last_rows.loc[last_rows["at_edge"].to_numpy(dtype=bool), "track_id"].astype(int))
+    # a track still there at the last processed frame did not vanish: the video ended (SPEC §12.48)
+    ended = last_rows["t"].to_numpy() >= tt["t"].max() - midpoint_gap(ctx)
+    exits |= set(last_rows.loc[ended, "track_id"].astype(int))
     segments = []
     for (a, b), t0 in sorted(contacts(valid, p).items(), key=lambda kv: kv[1]):
         pair = [tracks[a], tracks[b]]

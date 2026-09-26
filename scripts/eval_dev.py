@@ -5,12 +5,13 @@ samples/), writes predictions_dev.json, prints evaluate.py's per-class table, th
 positive and false negative at --tiou with timestamps so they can be looked at in the video. Also
 writes the dev metrics for the website (web/public/data/metrics.json).
 
-Usage: python scripts/eval_dev.py [--no-cache] [--tiou 0.5]
+Usage: python scripts/eval_dev.py [--no-cache] [--tiou 0.5] [--all-classes]
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import evaluate  # noqa: E402
 from roadwatch import pipeline  # noqa: E402
-from roadwatch.config import CACHE_DIR, REPO_ROOT  # noqa: E402
+from roadwatch.config import CACHE_DIR, REPO_ROOT, load_thresholds  # noqa: E402
 from roadwatch.devdata import cached_scene, cached_signals, load_cached  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
 
@@ -66,7 +67,19 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "predictions_dev.json")
     ap.add_argument("--metrics", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "metrics.json")
     ap.add_argument("--tiou", type=float, default=0.5, help="tIoU for the FP/FN list")
+    ap.add_argument(
+        "--all-classes",
+        action="store_true",
+        help="preview: run every rule (fire_smoke excepted) as if enabled, to decide what to switch on; "
+        "writes predictions_dev_all.json and leaves the website metrics alone",
+    )
     args = ap.parse_args()
+    thresholds = None
+    if args.all_classes:
+        thresholds = copy.deepcopy(load_thresholds())
+        for label, c in thresholds["classes"].items():
+            c["enabled"] = label != "fire_smoke"
+        args.out = args.out.with_name("predictions_dev_all.json")
 
     if not args.gt.exists():
         ap.error(f"{args.gt} does not exist (write labels/raw/*.csv, then run scripts/labels_to_gt.py)")
@@ -80,7 +93,9 @@ def main() -> int:
             tt, meta = load_cached(Path(video).stem, args.cache)
             timeline = cached_signals(Path(video).stem, args.cache, scene)
             video_scene = cached_scene(Path(video).stem, args.cache, scene)
-            events = pipeline.events_from_tracks(tt, meta, video_scene, signal_timeline=timeline)
+            events = pipeline.events_from_tracks(
+                tt, meta, video_scene, signal_timeline=timeline, thresholds=thresholds
+            )
         pred["videos"][video] = {"events": events, "risk": []}
     args.out.write_text(json.dumps(pred, indent=1) + "\n", encoding="utf-8")
 
@@ -97,6 +112,9 @@ def main() -> int:
     for line in lines:
         print("  " + line)
 
+    if args.all_classes:
+        print(f"\nwrote {args.out} (preview of every rule; website metrics untouched)")
+        return 0
     a = report["part_a"]
     metrics = {
         "source": "scripts/eval_dev.py on labels/dev_gt.json",

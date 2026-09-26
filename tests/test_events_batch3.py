@@ -189,3 +189,28 @@ def test_leaving_through_the_frame_edge_is_not_a_crash() -> None:
     assert tt.loc[tt["y2"] >= 999.0, "at_edge"].all()
     assert not tt.loc[tt["at_edge"], "kin_valid"].any()
     assert accident.detect(tt, scene, ctx(6), cfg("accident")) == []
+
+
+def test_tracks_ending_with_the_video_do_not_confirm_a_crash() -> None:
+    # C3902's first 8 s: a contact with a shock 1 s before the video ends. Nothing can stay stopped for
+    # 3 s any more, and both tracks simply end with the video: that is not "lost mid-frame right after
+    # the contact" (a rider thrown down, a car knocked out of view).
+    a, b = t_bone(t_end=7.0)
+    assert accident.detect(kin(a, b), SCENE, ctx(7.0), cfg("accident")) == []
+    # ... while the same crash with the video running on is still confirmed by the vehicles stopping
+    a, b = t_bone(t_end=20.0)
+    assert len(accident.detect(kin(a, b), SCENE, ctx(20.0), cfg("accident"))) == 1
+
+
+def test_a_shock_in_a_tracks_first_second_is_not_a_crash() -> None:
+    # C3905 1:06 / C3902 0:06: a bus emerges from behind a truck. Its new box grows as it is revealed,
+    # so its first footprints race ahead and then stop dead: a -30 m/s^2 "braking" measured in the
+    # track's first half second, right where the two boxes overlap. The emerging bus then waits.
+    f = frames(0, 12)
+    t = f / FPS
+    passing = track(1, f, 60 + 8 * t, 45)
+    appears = f[t >= 5.0]
+    ta = appears / FPS
+    x = np.where(ta < 5.4, 100 + 12 * (ta - 5.0), 104.8)
+    revealed = track(2, appears, x, 45.5, cls="bus", w_px=80, h_px=40)
+    assert accident.detect(kin(passing, revealed), SCENE, ctx(12), cfg("accident")) == []

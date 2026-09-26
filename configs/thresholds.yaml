@@ -130,6 +130,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       shock_decel_mps2: 6.0
       shock_heading_deg: 30.0
       shock_heading_window_sec: 1.0
+      shock_min_track_age_sec: 1.0  # no braking/heading shock from a track's first second (a box being revealed)
       confirm_stopped_sec: 3.0
       single_speed_before_mps: 8.0
       single_speed_after_mps: 1.0

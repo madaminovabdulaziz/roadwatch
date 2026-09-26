@@ -18,7 +18,7 @@ outputs/
 # ...except the short annotated renders the website serves (scripts/render_samples.py, 720p H.264)
 !web/public/data/**/*.mp4
 predictions.json
-predictions_dev.json
+predictions_dev*.json
 report*.json
 configs/*.bak
 configs/*.tmp
