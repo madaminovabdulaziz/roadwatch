@@ -30,7 +30,7 @@ export default function HomeView() {
           value={metrics.state === "ok" ? metrics.data.score_a.toFixed(2) : "—"}
           hint={metrics.state === "ok" ? `${metrics.data.gt_events} labelled events, ${metrics.data.videos} videos` : undefined}
         />
-        <Stat label="runtime × video length on a T4" value={runtime ? `${runtime.toFixed(2)}×` : "—"} hint="budget: 3×" />
+        <Stat label="runtime × video length on a T4" value={runtime ? `${runtime.toFixed(2)}×` : "—"} hint="official harness, worst sample · budget: 3×" />
       </div>
     </>
   );

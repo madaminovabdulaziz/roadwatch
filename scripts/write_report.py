@@ -36,9 +36,12 @@ def alarms(risk: list[list[float]], threshold: float) -> int:
     return count
 
 
-def facts(metrics: dict[str, Any], pred: dict[str, Any]) -> dict[str, Any]:
+def facts(
+    metrics: dict[str, Any], pred: dict[str, Any], timing: dict[str, Any] | None = None
+) -> dict[str, Any]:
     th = load_thresholds()
     log = pred["log"]
+    official = (timing or {}).get("log", {})
     minutes = sum(v["duration"] for v in log.values()) / 60
     risk = [np.asarray(v["risk"], dtype=float) for v in pred["videos"].values() if v.get("risk")]
     scores = np.concatenate([r[:, 1] for r in risk]) if risk else np.zeros(1)
@@ -58,6 +61,9 @@ def facts(metrics: dict[str, Any], pred: dict[str, Any]) -> dict[str, Any]:
         "enabled": enabled_classes(),
         "ratios": ", ".join(
             f"{Path(k).stem} {v['total_sec'] / v['duration']:.2f}x" for k, v in sorted(log.items())
+        ),
+        "paced": ", ".join(
+            f"{Path(k).stem} {v['total_sec'] / v['duration']:.2f}x" for k, v in sorted(official.items())
         ),
         "alarms": n_alarms,
         "alarm_rate": n_alarms / max(minutes, 1e-9),
@@ -116,7 +122,8 @@ def report(f: dict[str, Any]) -> dict[str, Any]:
             f"""Time: on a Kaggle T4 with 4 CPU cores the full run takes {f["ratios"]} of the video
             length without pacing; the budget is 3x, and the harness's own decoding of every 4K
             frame is about half of it (the T4 cannot decode 4:2:2 10-bit H.264 in hardware). A pacer
-            thins our work by the clock, so a slower machine still finishes inside the budget.""",
+            thins our work by the clock, so a slower machine still finishes inside the budget"""
+            + (f""": the official run on the same machine took {f["paced"]}.""" if f["paced"] else "."),
         ],
         "What worked": [
             """Calibrating the scene once and measuring in metres. Caching tracks, so a rule change is
@@ -149,10 +156,12 @@ def main() -> int:
     ap.add_argument("--predictions", type=Path, default=REPO_ROOT / "predictions_samples.json")
     ap.add_argument("--metrics", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "metrics.json")
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "report.json")
+    ap.add_argument("--timing", type=Path, help="official harness run (pacing on, 3x) on the same machine")
     args = ap.parse_args()
     metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
     pred = json.loads(args.predictions.read_text(encoding="utf-8"))
-    args.out.write_text(json.dumps(report(facts(metrics, pred)), indent=1) + "\n", encoding="utf-8")
+    timing = json.loads(args.timing.read_text(encoding="utf-8")) if args.timing else None
+    args.out.write_text(json.dumps(report(facts(metrics, pred, timing)), indent=1) + "\n", encoding="utf-8")
     print(f"wrote {args.out}")
     return 0
 

@@ -29,6 +29,12 @@ def test_report_numbers_come_from_the_files() -> None:
     assert "Score A 0.471 (42 predicted events)" in text
     assert "stop_line 1.00" in text and "count as 0: stopped_vehicle" in text
     assert "1 alarm in 2.0 min" in text and "  " not in text
+    assert "inside the budget." in text
+
+    official = {"log": {"a.mp4": {"duration": 120.0, "total_sec": 324.0}}}
+    sections = write_report.report(write_report.facts(metrics, pred, official))["sections"]
+    text = " ".join(p for s in sections for p in s["paragraphs"])
+    assert "the official run on the same machine took a 2.70x." in text
 
 
 def test_the_gallery_shows_the_event_that_matches_a_label() -> None:

@@ -8,7 +8,8 @@ and results/index.json.
 
 Events, in order of preference:
 - `--predictions predictions_samples.json`: exactly what the official harness produced (also gives the
-  risk curves and the runtime x duration shown on the home page);
+  risk curves, and the runtime x duration shown on the home page unless `--timing` names the official
+  3x run: the deliverable itself comes from an unpaced run with a relaxed time factor, SPEC §12.54);
 - otherwise Part A from the track cache with the current thresholds, i.e. what the submission emits;
 - `--preview-all`: every runnable rule, enabled or not, for reviewing classes before switching them on
   (RUNBOOK P2.5). Such output is marked "preview" in index.json and must not be published as results.
@@ -93,6 +94,12 @@ def main() -> int:
     ap.add_argument("videos", type=Path, help="folder with the sample .mp4 files")
     ap.add_argument("--cache", type=Path, default=CACHE_DIR / "tracks")
     ap.add_argument("--predictions", type=Path, help="harness output to take events and risk from")
+    ap.add_argument(
+        "--timing",
+        type=Path,
+        help="official harness run (pacing on, 3x) whose log gives the home page's runtime; the "
+        "--predictions file may come from an unpaced run with a relaxed time factor",
+    )
     ap.add_argument("--preview-all", action="store_true", help="run every rule (review only)")
     ap.add_argument("--no-blur", action="store_true", help="do not blur faces")
     ap.add_argument("--no-clips", action="store_true")
@@ -201,6 +208,9 @@ def main() -> int:
             )
         print(f"{video.name}: {len(events)} events, {len(risk)} risk samples -> {folder}", flush=True)
 
+    if args.timing:
+        log = json.loads(args.timing.read_text(encoding="utf-8")).get("log", {})
+        ratios = [v["total_sec"] / v["duration"] for v in log.values() if v.get("duration")]
     if ratios:
         index["runtime_x_duration"] = round(max(ratios), 2)  # the worst video is what the budget sees
     args.out.mkdir(parents=True, exist_ok=True)

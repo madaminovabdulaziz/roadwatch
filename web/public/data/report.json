@@ -1,0 +1,45 @@
+{
+ "sections": [
+  {
+   "title": "What we built",
+   "paragraphs": [
+    "RoadWatch watches one fixed 4K camera over a signalised junction. Part A finds 14 kinds of traffic events as time segments; Part B gives, frame by frame and without looking ahead, the probability that an accident starts within 5 s. The same package runs the organizers' harness, the website's sample videos and the live demo.",
+    "We switched on 8 of the 14 classes: accident, red_light, wrong_way, jaywalking, failure_to_yield, solid_line_crossing, stop_line, road_obstacle. The others stay off because we could not show on real footage that they would help the score more than hurt it (see below)."
+   ]
+  },
+  {
+   "title": "How it works",
+   "paragraphs": [
+    "Perception: YOLO11m (open COCO weights) at 960 px in FP16 on the T4, on every third frame (10 Hz), and ByteTrack. Everything after the detector is geometry we can explain: a hand-calibrated scene (carriageway, lanes and their directions, stop line, three zebra crossings, islands, bus stop, parking, the signal head) and a homography from vanishing points turn boxes into footprints in metres on the road. The signal state is read from the lamp colours. Each recording is registered to the reference frame (SIFT on the median background), so the scene fits clips framed slightly differently.",
+    "Part A: one rule per class over the tracks. For example, failure_to_yield is a car, bus or truck driving over the roadway part of a crossing while a pedestrian is on it within 3 m of its path. One post-processing step merges, filters and clips the segments.",
+    "Part B: the same detector and tracker online, then conflicts that need emergency braking to avoid (deceleration to avoid a crash of at least 5 m/s\u00b2, time to collision under 4 s, held for 3 frames), plus red-light and wrong-way flags, combined in a logistic score and smoothed over time. It never opens the file."
+   ]
+  },
+  {
+   "title": "How well it works",
+   "paragraphs": [
+    "We labelled the 2 sample videos ourselves (7.4 min, 39 events) and scored the real submission run on a T4 with the official evaluate.py: Score A 0.471 (42 predicted events). Mean F1 over tIoU 0.3/0.5/0.7 per class: stop_line 1.00, red_light 0.67, solid_line_crossing 0.67, failure_to_yield 0.54, jaywalking 0.42. Labelled classes we keep off count as 0: illegal_u_turn, stopped_vehicle. With so few events one mistake moves a class by a third, so we read these numbers as a check, not a leaderboard.",
+    "Part B: the samples contain no accident, so all we can measure is calm: 2 alarms in 7.4 min of dense traffic (0.27 per minute), median risk 0.047.",
+    "Time: on a Kaggle T4 with 4 CPU cores the full run takes C3902 3.09x, C3905 2.98x of the video length without pacing; the budget is 3x, and the harness's own decoding of every 4K frame is about half of it (the T4 cannot decode 4:2:2 10-bit H.264 in hardware). A pacer thins our work by the clock, so a slower machine still finishes inside the budget."
+   ]
+  },
+  {
+   "title": "What worked",
+   "paragraphs": [
+    "Calibrating the scene once and measuring in metres. Caching tracks, so a rule change is scored on real traffic in seconds. Looking at every error on the frames before changing anything: Part B went from 31 false alarms to 2 in 7.4 min once a conflict had to need emergency braking and was only measured where the camera resolves it; failure_to_yield went from 51 false positives to 8; accident from 4 to 0; a bus hidden behind another no longer 'crosses' a solid line."
+   ]
+  },
+  {
+   "title": "What did not",
+   "paragraphs": [
+    "near_miss: far from the camera, box jitter looks exactly like hard braking (23 false positives), so it is off. stopped_vehicle: the only stops in the samples are buses at the far bus stop, where one pixel is 9-16 cm of road. illegal_u_turn: we found no sign that forbids U-turns here, and the one U-turn paused for 26 s. jaywalking: people waiting in the kerb lane count by the definition and join separate crossings into long events. The Results page shows each case."
+   ]
+  },
+  {
+   "title": "What we would do next",
+   "paragraphs": [
+    "Label more video, including the reference recording and other times of day, and learn each class's boundary offsets from it. Detect the far kerb on a second, zoomed tile, so the bus stop and the far crossings are measured as finely as the near side. Train a small classifier on the rule features for near_miss instead of a single threshold."
+   ]
+  }
+ ]
+}

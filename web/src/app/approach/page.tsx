@@ -8,7 +8,7 @@ const STEPS = [
   ["Decode", "PyAV, reference frames only (every 3rd), straight to detector size"],
   ["Detect", "YOLO11m (COCO), FP16 on the GPU"],
   ["Track", "ByteTrack, one tracker per object group"],
-  ["Metres", "homography from lane markings; speed, acceleration, heading"],
+  ["Metres", "homography from the lane markings' vanishing points; speed, heading"],
   ["Scene rules", "one rule per class on tracks + lanes, lines, crossings, lights"],
   ["Post-process", "merge, minimum duration, boundary refinement, union"],
   ["Events", "[start, end, label] per video"],
@@ -44,7 +44,7 @@ function PipelineDiagram() {
           Part B: online risk
         </text>
         <text x={2 * (w + gap) + 10 + (2 * w + gap) / 2} y={140} textAnchor="middle" fill="#a1a1aa" fontSize={10}>
-          own detector + tracker on past frames only → TTC, braking → P(crash in 5 s)
+          past frames only → braking conflicts → P(accident in 5 s)
         </text>
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
