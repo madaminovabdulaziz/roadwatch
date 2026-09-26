@@ -1,8 +1,10 @@
 """Plot each signal's lamp scores and estimated state for a quick visual check (RUNBOOK P1.2).
 
-For every sample video: decode reference frames every `--every` frames at native resolution, run
-SignalStateEstimator.timeline, print the state segments (compare a few with the video by eye), and
-save outputs/signals/<video>.png (raw lamp scores + state band) and <video>.json (the timeline).
+For every sample video: align the scene to the video (the tripod moves between recordings and a lamp
+box is only ~20 px wide: on C3902 the unaligned boxes miss the lamps by ~140 px; SPEC §12.34), decode
+reference frames every `--every` frames at native resolution, run SignalStateEstimator.timeline, print
+the state segments (compare a few with the video by eye), and save outputs/signals/<video>.png (raw
+lamp scores + state band) and <video>.json (the timeline).
 matplotlib comes with the runtime lock (a supervision dependency); it is used only here.
 
 Usage: python scripts/plot_signal_timeline.py samples/ [--every 6] [--seconds 120]
@@ -27,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from roadwatch.config import REPO_ROOT, SCENE_PATH  # noqa: E402
 from roadwatch.scene.light import LAMPS, SignalStateEstimator, lamp_scores  # noqa: E402
+from roadwatch.scene.registration import scene_for_video  # noqa: E402
 from roadwatch.scene.scene import Scene  # noqa: E402
 from roadwatch.types import Frame  # noqa: E402
 from roadwatch.video import read_window  # noqa: E402
@@ -54,11 +57,16 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     for path in videos:
+        video_scene, reg = scene_for_video(path, scene)
+        aligned = "aligned" if reg is not None and reg.confident else "NOT aligned (lamp boxes as clicked)"
         times: list[float] = []
         scores: dict[str, list[np.ndarray]] = {}
 
         def frames(
-            video: Path = path, times: list[float] = times, scores: dict[str, list[np.ndarray]] = scores
+            video: Path = path,
+            times: list[float] = times,
+            scores: dict[str, list[np.ndarray]] = scores,
+            scene: Scene = video_scene,
         ) -> Iterator[Frame]:
             end = args.seconds if args.seconds else math.inf
             for idx, t, img in read_window(video, 0.0, end, stride=args.every, skip_nonref=True):
@@ -67,7 +75,7 @@ def main() -> int:
                     scores.setdefault(sid, []).append(s)
                 yield idx, t, img
 
-        timeline = SignalStateEstimator(scene).timeline(frames())
+        timeline = SignalStateEstimator(video_scene).timeline(frames())
         (args.out / f"{path.stem}.json").write_text(json.dumps(timeline, indent=1) + "\n", encoding="utf-8")
 
         fig, axes = plt.subplots(len(timeline), 1, figsize=(14, 2.6 * len(timeline)), squeeze=False)
@@ -86,7 +94,7 @@ def main() -> int:
         fig.savefig(args.out / f"{path.stem}.png", dpi=110)
         plt.close(fig)
 
-        print(f"{path.name}: {len(times)} frames -> {args.out / (path.stem + '.png')}")
+        print(f"{path.name}: scene {aligned}, {len(times)} frames -> {args.out / (path.stem + '.png')}")
         for sid, segs in timeline.items():
             print(f"  {sid}: " + ", ".join(f"{t0:.1f}-{t1:.1f} {state}" for t0, t1, state in segs))
     return 0
