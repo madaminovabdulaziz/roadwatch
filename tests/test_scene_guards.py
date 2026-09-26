@@ -124,3 +124,36 @@ def test_islands_and_bus_stops_move_with_the_scene() -> None:
     for layer in ("islands", "bus_stops"):
         before = np.asarray(GUARD_SCENE.layers[layer][0])
         np.testing.assert_allclose(np.asarray(moved.layers[layer][0]), before + [15.0, -7.0], atol=0.01)
+
+
+# ------------------------------------------------------------------------------- stopped_vehicle: queues
+def test_the_tail_of_a_long_red_queue_is_queued() -> None:
+    # C3902's red phases: the queue reaches 60+ m back from the stop line (x = 95 m), and at that
+    # distance the detector misses some of the cars in it, so nobody is found stopped just ahead.
+    tail = braking_car(1, 35, 45, t_brake=2, t_go=40, t_end=40)  # 60 m upstream, lane e1 (signal L1)
+    red = {"L1": [(0.0, 40.0, "red")]}
+    assert stopped_vehicle.detect(kin(tail), GUARD_SCENE, ctx(40, red), cfg("stopped_vehicle")) == []
+    green = {"L1": [(0.0, 40.0, "green")]}  # the same car stopped there with a green light is an event
+    assert len(stopped_vehicle.detect(kin(tail), GUARD_SCENE, ctx(40, green), cfg("stopped_vehicle"))) == 1
+
+
+def test_a_column_stuck_past_the_stop_line_behind_a_waiting_truck_is_queued() -> None:
+    # C3905 1:17-1:54: cars that entered on green stand on the zebra past the stop line, outside any
+    # lane, behind a long truck waiting at the exit. Each has a stopped vehicle just ahead of it.
+    no_lanes_past_line = Scene(
+        {
+            **GUARD_SCENE.layers,
+            "lanes": [
+                {**lane, "polygon": rect(0, lane["polygon"][0][1] / 10, 95, lane["polygon"][2][1] / 10)}
+                for lane in GUARD_SCENE.layers["lanes"]
+            ],
+        }
+    )
+    truck = braking_car(1, 112, 45, t_brake=2, t_go=40, t_end=40)
+    truck["cls"] = "truck"
+    car = braking_car(2, 102, 45, t_brake=2.5, t_go=40, t_end=40)  # 10 m behind the truck, past the line
+    tt = add_kinematics(pd.concat([truck, car], ignore_index=True).astype(TRACK_DTYPES), no_lanes_past_line)
+    waiting = (tt["track_id"] == 2) & (tt["t"] > 10)
+    assert (tt.loc[waiting, "lane_id"] == "").all()  # stopped past the line: in no lane
+    segs = stopped_vehicle.detect(tt, no_lanes_past_line, ctx(40), cfg("stopped_vehicle"))
+    assert 2 not in {tid for s in segs for tid in s.track_ids}

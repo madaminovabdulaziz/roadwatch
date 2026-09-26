@@ -204,8 +204,9 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
       min_stopped_sec: 10.0
       resume_speed_mps: 1.0
       resume_hold_sec: 1.0
-      queue_upstream_m: 30.0
-      queue_ahead_m: 12.0
+      queue_upstream_m: 120.0     # red queues here run 60 m and more (SPEC §12.50)
+      queue_ahead_m: 15.0         # one car missed by the detector must not break a queue
+      queue_lateral_m: 2.0        # outside any lane: lined up along the vehicle's heading within this
 
   jaywalking:
     enabled: false
@@ -232,8 +233,9 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     params:
       min_vehicle_speed_mps: 1.5
       ped_edge_dist_m: 1.0
-      conflict_lateral_m: 5.0     # pedestrian within this distance of the vehicle's axis (own + next lane) ...
+      conflict_lateral_m: 3.0     # pedestrian within this distance of the vehicle's axis (own lane + half) ...
       conflict_ahead_m: 6.0       # ... and at most this far ahead of its front (SPEC §12.36)
+      max_crossing_sec: 5.0       # on a crossing longer than this = waiting there, not driving through (SPEC §12.49)
 
   illegal_turn:
     enabled: false

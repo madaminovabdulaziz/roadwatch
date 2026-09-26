@@ -2,8 +2,11 @@
 
 Trigger: Speed < stop_speed_mps continuously for >= min_stopped_sec, footprint on the carriageway,
 not in a parking zone, and NOT queued: not within queue_upstream_m upstream of a stop line whose
-signal is red/yellow, and no stopped vehicle ahead in the same lane within queue_ahead_m. Position
-persistence bridges id switches of stationary objects (SPEC §3).
+signal is red/yellow (the whole approach: red queues here run 60 m and more), and no stopped vehicle
+ahead within queue_ahead_m, in the same lane or, outside any lane, lined up along the vehicle's heading
+(a column stuck on the zebra behind a waiting truck). Only where the road is measured finely enough
+(ground_scale <= risk.max_ground_m_per_px): far up the road the detector misses cars in the queue
+(SPEC §12.50). Position persistence bridges id switches of stationary objects (SPEC §3).
 Start: first time the speed dropped below stop_speed_mps (backdated).
 End: speed > resume_speed_mps for resume_hold_sec, or the track is gone; still stopped at the last
 frame -> video duration.
@@ -32,7 +35,7 @@ import pandas as pd
 from roadwatch.config import load_thresholds
 from roadwatch.events.base import VideoContext
 from roadwatch.events.common import by_track, in_group, lane_world_dirs, max_gap, runs, signal_states
-from roadwatch.scene.scene import Scene
+from roadwatch.scene.scene import Scene, ground_scale
 from roadwatch.types import Segment
 
 LABEL = "stopped_vehicle"
@@ -87,15 +90,24 @@ def queued(v: pd.DataFrame, scene: Scene, ctx: VideoContext, p: dict[str, Any]) 
             states = signal_states(ctx, str(sl["signal"]), t[near])
             out[np.flatnonzero(near)[np.isin(states, _QUEUE_STATES)]] = True
 
+    # "Ahead" follows the lane, or outside any lane (past the stop line, on a zebra) the vehicle's own
+    # last heading: a column stuck behind a waiting truck is a queue too (SPEC §12.50).
     slow = v["speed"].to_numpy() < p["stop_speed_mps"]
+    rad = np.radians(v["heading_deg"].to_numpy(dtype=np.float64))
+    heading = np.stack([np.cos(rad), np.sin(rad)], axis=1)
+    lane_less = lanes == ""
+    direction = np.where(lane_less[:, None], heading, lane_dir)
     for _, idx in v.groupby("frame", sort=False).indices.items():
-        idx = idx[slow[idx] & (lanes[idx] != "")]
+        idx = idx[slow[idx] & np.isfinite(direction[idx]).all(axis=1)]
         if len(idx) < 2:
             continue
         rel = pos[idx][None, :, :] - pos[idx][:, None, :]  # [i, j] = j - i
-        along = (rel * lane_dir[idx][:, None, :]).sum(axis=2)
-        same_lane = lanes[idx][:, None] == lanes[idx][None, :]
-        ahead = same_lane & (along > 0) & (along <= p["queue_ahead_m"])
+        d = direction[idx][:, None, :]
+        along = (rel * d).sum(axis=2)
+        lateral = np.abs(rel[..., 0] * d[..., 1] - rel[..., 1] * d[..., 0])
+        same_lane = (lanes[idx][:, None] == lanes[idx][None, :]) & ~lane_less[idx][:, None]
+        lined_up = lane_less[idx][:, None] & (lateral <= p["queue_lateral_m"])
+        ahead = (same_lane | lined_up) & (along > 0) & (along <= p["queue_ahead_m"])
         out[idx[ahead.any(axis=1)]] = True
     return out
 
@@ -109,8 +121,13 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
         return []
     # waiting inside the intersection (a left-turner yielding, spillback) or dwelling at the bus stop is
     # traffic, not a stopped vehicle (SPEC §12.42)
+    measurable = (
+        ground_scale(scene, v[["fx", "fy"]].to_numpy(dtype=np.float64))
+        <= (load_thresholds()["risk"]["max_ground_m_per_px"])
+    )
     v["ok"] = (
-        v["on_road"].to_numpy()
+        measurable  # far up the road the queue ahead is often missed by the detector (SPEC §12.50)
+        & v["on_road"].to_numpy()
         & ~v["in_parking"].to_numpy()
         & ~v["in_intersection"].to_numpy()
         & ~v["in_bus_stop"].to_numpy()

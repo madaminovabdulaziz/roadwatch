@@ -41,7 +41,7 @@ from roadwatch.config import load_thresholds
 from roadwatch.events.common import lane_world_dirs
 from roadwatch.scene.light import SignalStateEstimator
 from roadwatch.scene.registration import OnlineRegistration
-from roadwatch.scene.scene import Scene
+from roadwatch.scene.scene import Scene, ground_scale
 from roadwatch.types import FrameTracks
 
 _FORGET_SEC = 2.0  # a track unseen this long is dropped from the online kinematics
@@ -123,22 +123,6 @@ def _slope(samples: deque, c: dict[str, Any]) -> np.ndarray | None:
         return None
     denom = float((t * t).sum())
     return (t[:, None] * (arr[:, 1:] - arr[:, 1:].mean(axis=0))).sum(axis=0) / denom
-
-
-def ground_scale(scene: Scene, foot: np.ndarray) -> np.ndarray:
-    """Road-plane metres per pixel at each image point (worst direction), as if the frame were 3840 px wide.
-
-    Far from the camera a few pixels of box jitter are metres of apparent motion, so tracks there carry
-    no kinematics (SPEC §12.47). Scenes without an `image_size` (synthetic tests) are never gated.
-    """
-    size = scene.layers.get("image_size")
-    if not size or not len(foot):
-        return np.zeros(len(foot))
-    p0 = scene.to_world(foot)
-    jx = scene.to_world(foot + np.array([1.0, 0.0])) - p0
-    jy = scene.to_world(foot + np.array([0.0, 1.0])) - p0
-    jac = np.stack([jx, jy], axis=2)
-    return np.linalg.svd(jac, compute_uv=False)[:, 0] * (float(size[0]) / 3840.0)
 
 
 def _extents(

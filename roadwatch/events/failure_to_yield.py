@@ -1,13 +1,17 @@
 """failure_to_yield: A vehicle drives through a crossing while a pedestrian is on it or stepping onto it.
 
 Trigger: the vehicle (speed > min_vehicle_speed_mps) overlaps a crosswalk while a pedestrian in its
-path is on that crosswalk, or within ped_edge_dist_m of its edge and moving toward it. "In its path":
+path is on that crosswalk's roadway part (its ends on the kerb or median island are where people wait,
+SPEC §12.49), or within ped_edge_dist_m of its edge and moving toward it. "In its path":
 within conflict_lateral_m of the vehicle's axis and between its rear bumper and conflict_ahead_m ahead
 of its front bumper (SPEC §12.36): a pedestrian at the far end of a 20 m crossing is not a conflict.
 Start: the vehicle enters the crosswalk (its front bumper reaches it).
 End: the vehicle leaves the crosswalk (its rear bumper clears it).
 
 Details:
+- Cars, buses and trucks only: two-wheelers here ride across the zebras with the walkers. A vehicle on
+  the crossing longer than max_crossing_sec is waiting there (usually letting people cross), not driving
+  through it (SPEC §12.49).
 - The vehicle's extent comes from the ground-plane vehicle model (front/rear bumpers, SPEC §12.35);
   "overlaps" = any of 5 points from front to rear bumper inside the polygon.
 - Boundaries at sample transitions are timed at the midpoint of the two samples.
@@ -58,8 +62,11 @@ def _pedestrians(tt: pd.DataFrame, scene: Scene, p: dict[str, Any]) -> dict[str,
     world = ped[["X", "Y"]].to_numpy(dtype=np.float64)
     vel = ped[["vx", "vy"]].to_numpy(dtype=np.float64)
     frames = ped["frame"].to_numpy()
+    # on the crossing = on its roadway part: the zebra's ends on the kerb or the median island are where
+    # people wait, and at this junction they wait there all day (SPEC §12.49)
+    on_roadway = ped["on_road"].to_numpy(dtype=bool) & ~ped["on_sidewalk"].to_numpy(dtype=bool)
     for cw_id, poly in scene.polygons("crosswalks"):
-        inside = ped["crosswalk_id"].to_numpy() == cw_id
+        inside = (ped["crosswalk_id"].to_numpy() == cw_id) & on_roadway
         centre = scene.to_world(poly).mean(axis=0)
         toward = ((centre - world) * vel).sum(axis=1) > 0
         moving = np.hypot(vel[:, 0], vel[:, 1]) > _WALKING_MPS
@@ -104,7 +111,8 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     peds_by_cw = _pedestrians(tt, scene, p)
     if not peds_by_cw:
         return []
-    v = tt[in_group(tt, "vehicles", "two_wheelers")]
+    # cars, buses, trucks: two-wheelers here ride across the zebras with the walkers (SPEC §12.49)
+    v = tt[in_group(tt, "vehicles")]
     gap, mid = max_gap(ctx), midpoint_gap(ctx)
     segments = []
     for tid, rows in by_track(v):
@@ -118,6 +126,8 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                 continue
             overlap = points_in_polygon(body.reshape(-1, 2), poly).reshape(len(rows), -1).any(axis=1)
             for a, b in runs(t, overlap, gap):
+                if t[b] - t[a] > p["max_crossing_sec"]:
+                    continue  # on the crossing that long is waiting (usually yielding), not driving through
                 score = max(
                     (
                         _conflict(rows, i, seen[int(frames[i])], scene, p)

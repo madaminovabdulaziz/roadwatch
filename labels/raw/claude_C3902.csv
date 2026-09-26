@@ -7,3 +7,6 @@ C3902.MP4,91.5,99.4,failure_to_yield,"the same white SUV crossed the right zebra
 C3902.MP4,204.0,215.7,stopped_vehicle,"dark bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
 C3902.MP4,229.4,244.2,stopped_vehicle,"articulated green bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
 C3902.MP4,285.3,289.6,failure_to_yield,"black SUV rolled onto the side zebra while a group was crossing right in front of it (tracks + frames, Claude)"
+C3902.MP4,178.4,179.6,failure_to_yield,"white car drove over the right zebra while a group was crossing on it (found on review of the right zebra, Claude)"
+C3902.MP4,181.8,186.9,failure_to_yield,"cars kept driving over the right zebra through a crowd crossing on it (found on review of the right zebra, Claude)"
+C3902.MP4,266.0,269.4,failure_to_yield,"cars passed over the right zebra while a man walked across it (found on review of the right zebra, Claude)"

@@ -176,11 +176,12 @@ def test_a_pedestrian_far_along_the_same_crosswalk_is_not_in_the_path() -> None:
 
 
 def test_pedestrian_stepping_onto_the_crosswalk_counts_with_lower_score() -> None:
-    # car in lane e2 (y = 57.5, axis 56.6); pedestrian beyond the kerb at y = 60, 4.4 m from the axis
-    tt = kin(straight(1, 60, 57.5, 4, 15), pedestrian(2, 98, 61.0, -0.05, 15))  # 1 m out, standing
+    # car in lane e2 near the kerb (y = 59.5, axis 58.6); pedestrian beyond the kerb at y = 61, 2.4 m
+    # from the axis, i.e. in its path (conflict_lateral_m 3 m since SPEC §12.49)
+    tt = kin(straight(1, 60, 59.5, 4, 15), pedestrian(2, 98, 61.0, -0.05, 15))  # 1 m out, standing
     segs = failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield"))
     assert len(segs) == 0  # 0.05 m/s is standing, not stepping onto it
-    tt = kin(straight(1, 60, 57.5, 4, 15), pedestrian(2, 98, 65.8, -0.5, 15))  # 1 m out at 9.6 s, walking in
+    tt = kin(straight(1, 60, 59.5, 4, 15), pedestrian(2, 98, 65.8, -0.5, 15))  # 1 m out at 9.6 s, walking in
     segs = failure_to_yield.detect(tt, SCENE, ctx(15), cfg("failure_to_yield"))
     assert len(segs) == 1 and segs[0].score == 0.7
 
