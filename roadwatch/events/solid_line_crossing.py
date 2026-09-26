@@ -11,6 +11,8 @@ Details:
   the image box: in this oblique view the box is much wider than the car's ground footprint.
 - A corner counts only while its projection falls within the segment's extent (plus half a car
   length), so a vehicle passing the end of a solid line is not crossing it.
+- A sample whose footprint a nearer vehicle hides (`occluded_cover` of its box's bottom edge) settles
+  no side: its box ends at the other vehicle, not on the ground (SPEC §12.55).
 - Boundaries at sample transitions are timed at the midpoint of the two samples.
 Score = 1.0 (all tests are geometric).
 
@@ -25,7 +27,14 @@ import numpy as np
 import pandas as pd
 
 from roadwatch.events.base import VideoContext
-from roadwatch.events.common import by_track, in_group, max_gap, midpoint_before, midpoint_gap
+from roadwatch.events.common import (
+    by_track,
+    footprint_occluded,
+    in_group,
+    max_gap,
+    midpoint_before,
+    midpoint_gap,
+)
 from roadwatch.features import vehicle_corners
 from roadwatch.scene.scene import Scene
 from roadwatch.types import Segment
@@ -51,7 +60,8 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
     if tt.empty:
         return []
     p = cfg["params"]
-    v = tt[in_group(tt, "vehicles", "two_wheelers") & tt["kin_valid"].to_numpy()]
+    occluded = footprint_occluded(tt, p["occluded_cover"])
+    v = tt.assign(occluded=occluded)[in_group(tt, "vehicles", "two_wheelers") & tt["kin_valid"].to_numpy()]
     gap, mid = max_gap(ctx), midpoint_gap(ctx)
     segments = []
     for line in scene.layers.get("solid_lines") or []:
@@ -66,6 +76,7 @@ def detect(tt: pd.DataFrame, scene: Scene, ctx: VideoContext, cfg: dict[str, Any
                 seg = poly[s : s + 2]
                 sides = _sides(seg, corners, margin)
                 full = np.where((sides == 1).all(axis=1), 1, np.where((sides == -1).all(axis=1), -1, 0))
+                full[rows["occluded"].to_numpy()] = 0
                 event = _crossing(t, sides, full, centre, seg, inter, p, gap, mid)
                 if event is not None:
                     segments.append(Segment(*event, LABEL, 1.0, (tid,), {"line": line["id"]}))

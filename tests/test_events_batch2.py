@@ -289,6 +289,34 @@ def test_touching_or_parallel_driving_is_not_a_crossing() -> None:
     assert segs == []
 
 
+def test_a_footprint_hidden_by_a_nearer_vehicle_crosses_no_line() -> None:
+    """C3902 3:48: a bus half hidden behind another at the stop line. Its box ended at the nearer bus,
+    and the footprint drawn from it slid across a solid line while it stayed in its lane (SPEC §12.55)."""
+    rows, _, _ = lane_change(2.0)
+    y2 = rows["y2"].to_numpy()
+    nearer = rows.assign(
+        track_id=2, cls="bus", x1=440.0, x2=560.0, y1=y2 - 10, y2=y2 + 60, fx=500.0, fy=y2 + 60
+    )
+    segs = solid_line_crossing.detect(line_kin(rows, nearer), LINE_SCENE, ctx(8), cfg("solid_line_crossing"))
+    assert segs == []
+
+
+def test_footprint_occluded_needs_a_nearer_box_over_the_bottom_edge() -> None:
+    import pandas as pd
+
+    from roadwatch.events.common import footprint_occluded
+
+    boxes = [
+        ("car", 100, 100, 200, 200),  # 0: its bottom edge is half covered by 1 -> hidden
+        ("bus", 150, 180, 300, 260),  # 1: nearest, nothing below it
+        ("car", 100, 20, 200, 90),  # 2: 1 is below it but does not reach up to its bottom edge
+        ("car", 280, 150, 400, 240),  # 3: 1 covers 20 / 120 of its bottom edge only
+        ("person", 120, 150, 140, 250),  # 4: a person hides nothing and is not judged
+    ]
+    tt = pd.DataFrame([{"frame": 0, "cls": c, "x1": a, "y1": b, "x2": x, "y2": y} for c, a, b, x, y in boxes])
+    assert footprint_occluded(tt, 0.3).tolist() == [True, False, False, False, False]
+
+
 # ---------------------------------------------------------------------------------------- illegal_u_turn
 def u_turn_track(
     x_turn: float, t_turn: float = 3.0, radius: float = 6.0, v: float = 6.0, t_end: float = 12.0

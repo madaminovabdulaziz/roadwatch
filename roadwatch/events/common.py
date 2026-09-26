@@ -24,6 +24,7 @@ Rules receive the TrackTable after `features.add_kinematics` (one row per track 
   `gap`, or at a track's end, the sample itself is used.
 - `along_vehicle(rows, n)`: `n` image points from each row's front bumper to its rear bumper, for
   "does the vehicle overlap this polygon" tests.
+- `footprint_occluded(tt, min_cover)`: rows whose ground contact a nearer vehicle hides.
 """
 
 from __future__ import annotations
@@ -222,3 +223,28 @@ def along_vehicle(rows: pd.DataFrame, n: int = 5) -> np.ndarray:
     rear = rows[["rear_x", "rear_y"]].to_numpy(dtype=np.float64)
     w = np.linspace(0.0, 1.0, n)[None, :, None]
     return front[:, None, :] * (1 - w) + rear[:, None, :] * w
+
+
+def footprint_occluded(tt: pd.DataFrame, min_cover: float) -> np.ndarray:
+    """Per row of `tt`: True where a nearer vehicle's box hides this box's bottom edge.
+
+    In this oblique view nearer means lower in the image. When another vehicle's box reaches below this
+    box's bottom and covers at least `min_cover` of its width there, the box ends where the nearer
+    vehicle begins, not on the ground, and the footprint drawn from it can slide across lane markings
+    while the vehicle stays in its lane (a bus half hidden behind another at the stop line, SPEC §12.55).
+    """
+    out = np.zeros(len(tt), dtype=bool)
+    vehicle = in_group(tt, "vehicles", "two_wheelers")
+    boxes = tt[["x1", "y1", "x2", "y2"]].to_numpy(dtype=np.float64)
+    for idx in tt.groupby("frame", sort=False).indices.values():
+        idx = idx[vehicle[idx]]
+        if len(idx) < 2:
+            continue
+        b = boxes[idx]
+        x1, y1, x2, y2 = (b[:, k] for k in range(4))
+        cover = np.clip(np.minimum(x2[:, None], x2[None, :]) - np.maximum(x1[:, None], x1[None, :]), 0, None)
+        cover /= np.maximum(x2 - x1, 1e-9)[:, None]
+        # row i hidden by column j: j reaches below i's bottom edge and spans it vertically
+        hides = (y2[None, :] > y2[:, None]) & (y1[None, :] < y2[:, None]) & (cover >= min_cover)
+        out[idx] = hides.any(axis=1)
+    return out

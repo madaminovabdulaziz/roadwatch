@@ -259,6 +259,7 @@ classes:                      # SPEC §5 (triggers) and §6 (merge_gap, min_dur)
     min_dur: 0.5
     params:
       min_lateral_m: 1.0
+      occluded_cover: 0.3        # a nearer vehicle's box over this share of the bottom edge hides the footprint
 
   stop_line:
     enabled: true
