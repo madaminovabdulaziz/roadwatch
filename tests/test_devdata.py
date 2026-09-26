@@ -152,6 +152,19 @@ def test_label_eval_and_tune_scripts_end_to_end(tmp_path: Path) -> None:
     assert "Score A = 0.0000" in r.stdout and "FN [   10.00,    15.00]" in r.stdout
     assert json.loads(metrics.read_text())["per_class"]["jaywalking"]["f1_mean"] == 0.0
 
+    # --pred scores a finished harness run instead, and leaves the Part A output file alone
+    harness = tmp_path / "harness.json"
+    events = [[10.2, 15.0, "jaywalking"]]
+    harness.write_text(json.dumps({"videos": {"a.mp4": {"events": events, "risk": []}}}))
+    pred.unlink()
+    r = run(
+        "eval_dev.py", "--gt", str(gt), "--pred", str(harness), "--out", str(pred), "--metrics", str(metrics)
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    written = json.loads(metrics.read_text())
+    assert written["per_class"]["jaywalking"]["f1_mean"] == 1.0 and "harness.json" in written["source"]
+    assert not pred.exists()
+
     r = run("tune.py", "--gt", str(gt), "--cache", str(cache), "--classes", "jaywalking", "--top", "2")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "jaywalking: 3 combination(s), 1 labelled event(s)" in r.stdout and "current" in r.stdout

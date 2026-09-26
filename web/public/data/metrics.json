@@ -1,18 +1,18 @@
 {
- "source": "scripts/eval_dev.py on labels/dev_gt.json",
+ "source": "evaluate.py: predictions_samples.json (official harness run) vs labels/dev_gt.json",
  "videos": 2,
  "gt_events": 39,
- "pred_events": 38,
- "score_a": 0.4794,
+ "pred_events": 42,
+ "score_a": 0.4706,
  "per_class": {
   "failure_to_yield": {
-   "f1@0.3": 0.7333,
-   "f1@0.5": 0.5333,
-   "f1@0.7": 0.4667,
-   "f1_mean": 0.5778,
+   "f1@0.3": 0.6875,
+   "f1@0.5": 0.5,
+   "f1@0.7": 0.4375,
+   "f1_mean": 0.5417,
    "tp_fp_fn@0.5": [
     8,
-    8,
+    10,
     6
    ]
   },
@@ -28,13 +28,13 @@
    ]
   },
   "jaywalking": {
-   "f1@0.3": 0.6061,
-   "f1@0.5": 0.4242,
-   "f1@0.7": 0.303,
-   "f1_mean": 0.4444,
+   "f1@0.3": 0.5714,
+   "f1@0.5": 0.4,
+   "f1@0.7": 0.2857,
+   "f1_mean": 0.419,
    "tp_fp_fn@0.5": [
     7,
-    11,
+    13,
     8
    ]
   },

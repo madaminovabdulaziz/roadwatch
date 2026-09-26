@@ -3,9 +3,10 @@
 Runs Part A from cached tracks (cache/tracks/<video>.parquet; --no-cache runs the full pipeline on
 samples/), writes predictions_dev.json, prints evaluate.py's per-class table, then every false
 positive and false negative at --tiou with timestamps so they can be looked at in the video. Also
-writes the dev metrics for the website (web/public/data/metrics.json).
+writes the dev metrics for the website (web/public/data/metrics.json). --pred scores a harness output
+instead (predictions_samples.json: the real submission run on a T4), which is what the website shows.
 
-Usage: python scripts/eval_dev.py [--no-cache] [--tiou 0.5] [--all-classes]
+Usage: python scripts/eval_dev.py [--no-cache | --pred predictions_samples.json] [--tiou 0.5] [--all-classes]
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ def main() -> int:
     ap.add_argument("--cache", type=Path, default=CACHE_DIR / "tracks")
     ap.add_argument("--videos", type=Path, default=REPO_ROOT / "samples")
     ap.add_argument("--no-cache", action="store_true", help="run perception too (slow)")
+    ap.add_argument("--pred", type=Path, help="score this harness output instead of running Part A")
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "predictions_dev.json")
     ap.add_argument("--metrics", type=Path, default=REPO_ROOT / "web" / "public" / "data" / "metrics.json")
     ap.add_argument("--tiou", type=float, default=0.5, help="tIoU for the FP/FN list")
@@ -86,7 +88,15 @@ def main() -> int:
     gt = json.loads(args.gt.read_text(encoding="utf-8"))
     scene = Scene.load()
     pred: dict[str, Any] = {"team": "roadwatch", "videos": {}}
-    for video in sorted(gt):
+    if args.pred:
+        if args.all_classes or args.no_cache:
+            ap.error("--pred scores a finished run; it does not combine with --all-classes or --no-cache")
+        ran = json.loads(args.pred.read_text(encoding="utf-8"))["videos"]
+        missing = sorted(set(gt) - set(ran))
+        if missing:
+            ap.error(f"{args.pred} has no output for {', '.join(missing)}")
+        pred["videos"] = {video: {"events": ran[video]["events"], "risk": []} for video in sorted(gt)}
+    for video in [] if args.pred else sorted(gt):
         if args.no_cache:
             events = pipeline.detect_events(str(args.videos / video))
         else:
@@ -97,7 +107,8 @@ def main() -> int:
                 tt, meta, video_scene, signal_timeline=timeline, thresholds=thresholds
             )
         pred["videos"][video] = {"events": events, "risk": []}
-    args.out.write_text(json.dumps(pred, indent=1) + "\n", encoding="utf-8")
+    if not args.pred:
+        args.out.write_text(json.dumps(pred, indent=1) + "\n", encoding="utf-8")
 
     errors, _ = evaluate.validate(pred, gt)
     if errors:
@@ -117,7 +128,11 @@ def main() -> int:
         return 0
     a = report["part_a"]
     metrics = {
-        "source": "scripts/eval_dev.py on labels/dev_gt.json",
+        "source": (
+            f"evaluate.py: {args.pred.name} (official harness run) vs labels/dev_gt.json"
+            if args.pred
+            else "scripts/eval_dev.py on labels/dev_gt.json (Part A from the track caches)"
+        ),
         "videos": len(gt),
         "gt_events": sum(len(v["events"]) for v in gt.values()),
         "pred_events": sum(len(v["events"]) for v in pred["videos"].values()),
@@ -133,7 +148,7 @@ def main() -> int:
     }
     args.metrics.parent.mkdir(parents=True, exist_ok=True)
     args.metrics.write_text(json.dumps(metrics, indent=1) + "\n", encoding="utf-8")
-    print(f"\nwrote {args.out} and {args.metrics}")
+    print(f"\nwrote {args.metrics}" if args.pred else f"\nwrote {args.out} and {args.metrics}")
     return 0
 
 

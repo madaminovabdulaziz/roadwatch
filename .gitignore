@@ -20,6 +20,8 @@ outputs/
 predictions.json
 predictions_dev*.json
 report*.json
+# ...except the website's report page (web/public/data/report.json)
+!web/public/data/report.json
 configs/*.bak
 configs/*.tmp
 
