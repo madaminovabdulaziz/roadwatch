@@ -1,0 +1,9 @@
+video,start,end,label,notes
+C3902.MP4,18.2,32.8,stopped_vehicle,"articulated green bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
+C3902.MP4,48.0,82.0,illegal_u_turn,"white SUV came down the left road, turned toward the bottom-right corner at 0:48, waited there 26 s, turned round at 1:17.5 and left up the right road by 1:22; no sign forbids it, unsure (tracks + frames, Claude)"
+C3902.MP4,49.0,62.6,stopped_vehicle,"green bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
+C3902.MP4,52.8,54.5,failure_to_yield,"black car drove over the side zebra with a crowd walking beside it (tracks + frames, Claude)"
+C3902.MP4,91.5,99.4,failure_to_yield,"the same white SUV crossed the right zebra while a woman was crossing about 5 m to its side; unsure (tracks + frames, Claude)"
+C3902.MP4,204.0,215.7,stopped_vehicle,"dark bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
+C3902.MP4,229.4,244.2,stopped_vehicle,"articulated green bus at the far-kerb bus stop; purple zone, unsure (tracks + frames, Claude)"
+C3902.MP4,285.3,289.6,failure_to_yield,"black SUV rolled onto the side zebra while a group was crossing right in front of it (tracks + frames, Claude)"

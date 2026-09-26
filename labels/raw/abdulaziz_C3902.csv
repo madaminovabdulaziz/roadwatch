@@ -1,0 +1,17 @@
+video,start,end,label,notes
+C3902.MP4,3.7,6.1,jaywalking,
+C3902.MP4,6.4,11.8,jaywalking,
+C3902.MP4,11.8,15.1,jaywalking,
+C3902.MP4,21.5,29.6,jaywalking,
+C3902.MP4,27.1,35.6,jaywalking,
+C3902.MP4,48.2,55.9,jaywalking,
+C3902.MP4,61.1,69.1,jaywalking,
+C3902.MP4,81.1,101.6,jaywalking,
+C3902.MP4,81.5,88.0,illegal_u_turn,"black BYD SUV: crept onto the main zebra on green/yellow, paused 2.5 s, U-turned around the traffic-light island into the right road, then yielded at the right zebra; no sign forbids it, unsure (times checked frame by frame)"
+C3902.MP4,105.3,113.8,jaywalking,
+C3902.MP4,161.5,166.5,jaywalking,
+C3902.MP4,170.9,192.2,jaywalking,
+C3902.MP4,222.6,241.3,jaywalking,
+C3902.MP4,243.3,249.1,solid_line_crossing,
+C3902.MP4,256.7,267.5,jaywalking,
+C3902.MP4,272.4,279.9,jaywalking,
