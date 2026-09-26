@@ -108,7 +108,8 @@ events:                       # shared by the rules (roadwatch/events/common.py)
 runtime:                      # SPEC §11 and §12 (time budget)
   part_a_deadline_factor: 1.2 # Part A stops refining and returns what it has after this x duration
   perception_budget_factor: 1.0  # Part A perception paces itself to finish within this x duration
-  max_frame_skip: 6           # when behind schedule, detect only every k-th decoded frame, k <= this
+  max_frame_skip: 6           # when projected to overrun, detect only every k-th decoded frame, k <= this
+  pace_after_sec: 10.0        # ... judged on the rate after this much video (warm-up is not the rate; SPEC §12.56)
   refine_budget_frac: 0.15    # skip refinement if it would read more than this share of frames
 
 postprocess:                  # SPEC §6; per-class values below override these defaults

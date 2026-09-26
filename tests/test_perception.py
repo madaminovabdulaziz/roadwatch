@@ -129,3 +129,38 @@ def test_pacing_thins_detection_only_when_behind_schedule(
     )
     assert (stats["frames_detected"] < stats["frames_decoded"]) is skips
     assert (stats["max_frame_skip_used"] > 1) is skips
+
+
+def _paced_run(
+    horizon: float, decode: float, detect: float, warm_up: float = 0.0
+) -> tuple[float, float, int]:
+    """Drive the pacer like run_perception does: 8-frame batches at 10 Hz of video. A batch costs `decode`
+    per video second plus `detect` per video second for the share of frames it detects; the first batch
+    also pays `warm_up`. Returns (share of frames detected, perception time / budget, largest skip)."""
+    from roadwatch.perception.run import _Pacer
+
+    now = [0.0]
+    pacer = _Pacer(horizon, horizon, 6, lambda: now[0], grace_sec=10.0)
+    t = kept = total = 0.0
+    step = 8 / 10.0
+    while t < horizon:
+        detected = sum(pacer.keep() for _ in range(8))
+        now[0] += (warm_up if t == 0 else 0.0) + decode * step + detect * step * detected / 8
+        kept, total, t = kept + detected, total + 8, t + step
+        pacer.update(t)
+    return kept / total, now[0] / horizon, pacer.max_used
+
+
+def test_a_run_that_finishes_in_time_is_never_thinned_even_after_a_slow_warm_up() -> None:
+    """Kaggle, C3905: the first batch warms the GPU up. The old schedule check read that as falling behind
+    and dropped frames in a run that finished at 0.97x of its 1.0x budget (SPEC §12.56)."""
+    for decode, detect in ((0.55, 0.40), (0.35, 0.25)):
+        share, used, max_skip = _paced_run(127.6, decode, detect, warm_up=4.0)
+        assert share == 1.0 and max_skip == 1 and used < 1.0
+
+
+def test_a_slow_machine_thins_only_what_the_budget_needs() -> None:
+    share, used, _ = _paced_run(317.8, 0.57, 0.43, warm_up=4.0)  # 1.01x unpaced
+    assert 0.85 < share < 1.0 and used <= 1.0
+    share, used, _ = _paced_run(317.8, 0.70, 0.50, warm_up=4.0)  # 1.2x unpaced
+    assert 0.4 < share < 0.8 and 0.95 < used <= 1.0  # the budget is used, not thrown away

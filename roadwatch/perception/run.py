@@ -68,7 +68,8 @@ def run_perception(
     )
     tracker = OnlineTracker(meta.fps / stride)
     horizon = min(t_end, meta.duration)
-    pacer = _Pacer(budget_sec, horizon, cfg["runtime"]["max_frame_skip"], clock)
+    runtime = cfg["runtime"]
+    pacer = _Pacer(budget_sec, horizon, runtime["max_frame_skip"], clock, runtime["pace_after_sec"])
 
     timing = {"wait_frames_sec": 0.0, "detect_sec": 0.0, "track_sec": 0.0}
     counts = {"frames_decoded": 0, "frames_detected": 0, "detections": 0}
@@ -162,27 +163,51 @@ def tracks_to_table(frames: list[FrameTracks], names: dict[int, str]) -> pd.Data
 
 
 class _Pacer:
-    """Detect only every k-th frame while behind schedule; k moves one step per batch."""
+    """Detect only every k-th decoded frame while perception is projected to overrun its budget.
 
-    def __init__(self, budget_sec: float | None, horizon: float, max_skip: int, clock: Callable[[], float]):
+    Projection = time spent so far + the rest of the video at the rate measured since the grace period
+    ended (`grace_sec` of video, at most a quarter of it). Start-up costs, the first batch warming the GPU
+    up, are paid once and do not count as the rate. The old check (time spent against a linear schedule,
+    stepping back only below 80% of it) read that warm-up as falling behind, dropped every other frame and
+    kept doing so for long stretches of runs that would have finished in time (SPEC §12.56). k rises by one
+    per batch while the projection overruns and falls back once it is `margin` under the budget, so a
+    machine a few percent too slow thins a few percent of frames and a fast enough one never thins (its
+    output stays deterministic).
+    """
+
+    def __init__(
+        self,
+        budget_sec: float | None,
+        horizon: float,
+        max_skip: int,
+        clock: Callable[[], float],
+        grace_sec: float = 0.0,
+        margin: float = 0.05,
+    ):
         self.budget_sec, self.horizon, self.max_skip, self.clock = budget_sec, horizon, max_skip, clock
+        self.grace_sec, self.margin = min(grace_sec, 0.25 * horizon), margin
         self.start = clock()
         self.skip = 1
         self.max_used = 1
         self._count = 0
+        self._mark: tuple[float, float] | None = None  # (video t, elapsed) when the grace period ended
 
     def keep(self) -> bool:
         self._count += 1
         return self._count % self.skip == 0
 
     def update(self, t_sec: float) -> None:
-        if self.budget_sec is None or self.horizon <= 0:
+        if self.budget_sec is None or self.horizon <= 0 or t_sec < self.grace_sec:
             return
-        allowed = self.budget_sec * min(1.0, t_sec / self.horizon)
         elapsed = self.clock() - self.start
-        if elapsed > allowed and self.skip < self.max_skip:
+        if self._mark is None or t_sec <= self._mark[0]:
+            self._mark = self._mark or (t_sec, elapsed)
+            return
+        rate = (elapsed - self._mark[1]) / (t_sec - self._mark[0])
+        projected = elapsed + max(0.0, self.horizon - t_sec) * rate
+        if projected > self.budget_sec and self.skip < self.max_skip:
             self.skip += 1
-        elif elapsed < 0.8 * allowed and self.skip > 1:
+        elif projected < (1.0 - self.margin) * self.budget_sec and self.skip > 1:
             self.skip -= 1
         self.max_used = max(self.max_used, self.skip)
 
