@@ -10,6 +10,11 @@
   "clip": "results/failures/solid_line_occlusion.mp4"
  },
  {
+  "title": "Fixed: a car pulling up beside a pedestrian read as an accident",
+  "why": "Found by reviewing the unlabelled third sample event by event. The car braked hard and then stood right next to the person, which passed both the shock and the confirmation. With a pedestrian involved, the evidence now has to come from the pedestrian: a fall, or vanishing right after the contact. A car braking beside someone is what an avoided crash looks like.",
+  "clip": "results/failures/accident_car_beside_pedestrian.mp4"
+ },
+ {
   "title": "A bus dwelling at the far bus stop is too far away to judge",
   "why": "The definition of a stopped vehicle (10 s or more on the carriageway, not queued at a signal) arguably includes a bus loading at the stop. There one pixel of the 4K frame is 9-16 cm of road, too coarse to tell standing from creeping reliably, so stopped_vehicle is switched off rather than guessed.",
   "clip": "results/failures/stopped_bus_far_stop.mp4"

@@ -1,14 +1,24 @@
 {
  "videos": [
   {
+   "id": "C3896",
+   "name": "C3896.MP4",
+   "duration": 340.34,
+   "video": "results/C3896/annotated.mp4",
+   "poster": "results/C3896/poster.jpg",
+   "preview": "results/C3896/preview.mp4",
+   "events": "results/C3896/events.json",
+   "risk": "results/C3896/risk.json"
+  },
+  {
    "id": "C3902",
    "name": "C3902.MP4",
    "duration": 317.817,
    "video": "results/C3902/annotated.mp4",
    "poster": "results/C3902/poster.jpg",
+   "preview": "results/C3902/preview.mp4",
    "events": "results/C3902/events.json",
-   "risk": "results/C3902/risk.json",
-   "preview": "results/C3902/preview.mp4"
+   "risk": "results/C3902/risk.json"
   },
   {
    "id": "C3905",
@@ -16,9 +26,9 @@
    "duration": 127.627,
    "video": "results/C3905/annotated.mp4",
    "poster": "results/C3905/poster.jpg",
+   "preview": "results/C3905/preview.mp4",
    "events": "results/C3905/events.json",
-   "risk": "results/C3905/risk.json",
-   "preview": "results/C3905/preview.mp4"
+   "risk": "results/C3905/risk.json"
   }
  ],
  "enabled_classes": [
@@ -29,6 +39,7 @@
   "failure_to_yield",
   "solid_line_crossing",
   "stop_line",
+  "congestion",
   "road_obstacle"
  ],
  "runtime_x_duration": 2.7

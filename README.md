@@ -4,14 +4,14 @@ Traffic event detection (Part A) and accident anticipation (Part B) for one fixe
 WIUT Hackathon 2026 computer-vision elimination task. `solution.py` is the organizers' interface; the logic
 lives in the `roadwatch/` package.
 
-> Status: the scene is calibrated and 8 of the 14 classes are enabled, each after it passed the enable
+> Status: the scene is calibrated and 9 of the 14 classes are enabled, each after it passed the enable
 > policy on our labelled samples (`docs/SPEC.md` §7, decisions §12.52–§12.55): accident, red_light,
-> wrong_way, jaywalking, failure_to_yield, solid_line_crossing, stop_line, road_obstacle. The official
+> wrong_way, jaywalking, failure_to_yield, solid_line_crossing, stop_line, congestion, road_obstacle. The official
 > `evaluate.py` scores the submission's run on a T4 against our labels (2 videos, 39 events) in
-> `web/public/data/metrics.json`; Part B raised 2 alarms in 7.4 min of accident-free traffic. On a Kaggle T4
+> `web/public/data/metrics.json`; Part B raised 7 alarms in 13.1 min of accident-free traffic. On a Kaggle T4
 > with 4 CPU cores the official run takes about 2.7x the video length (budget 3x). The others stay off
 > because we could not show on real footage that they help: near_miss, stopped_vehicle, illegal_u_turn,
-> congestion, illegal_turn, fire_smoke (not implemented).
+> illegal_turn, fire_smoke (not implemented).
 
 ## Run it (what the organizers run)
 

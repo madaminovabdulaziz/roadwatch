@@ -3,12 +3,25 @@
     {
       "name": "Abdulaziz",
       "role": "Perception, pipeline & website",
-      "built": [],
+      "built": [
+        "Integrated the offline detector, tracker and event pipeline",
+        "Owned runtime budgeting, packaging and the Kaggle T4 release",
+        "Built the public website and live-demo integration"
+      ],
       "photo": "team/abdulaziz.png",
       "github": "https://github.com/madaminovabdulaziz",
       "linkedin": "https://www.linkedin.com/in/abdulaziz-madaminov/",
-      "portfolio": "",
-      "projects": [],
+      "portfolio": "https://github.com/madaminovabdulaziz",
+      "projects": [
+        {
+          "title": "BookHive",
+          "url": "https://github.com/madaminovabdulaziz/bookhive-django"
+        },
+        {
+          "title": "Job Recruitment System",
+          "url": "https://github.com/madaminovabdulaziz/job-recruitment-system"
+        }
+      ],
       "affiliations": [
         {
           "name": "WIUT",
@@ -41,12 +54,25 @@
     {
       "name": "Shaxzod",
       "role": "Scene calibration, event rules & risk",
-      "built": [],
+      "built": [
+        "Calibrated lanes, crossings, signal lamps and road-plane geometry",
+        "Implemented and tuned scene-aware event rules",
+        "Hardened the causal accident-risk estimator against false alarms"
+      ],
       "photo": "team/shaxzod.png",
       "github": "https://github.com/bakhodirovShakhzod",
       "linkedin": "https://www.linkedin.com/in/shakhzod-bakhodirov/",
-      "portfolio": "",
-      "projects": [],
+      "portfolio": "https://github.com/bakhodirovShakhzod",
+      "projects": [
+        {
+          "title": "Analytics API",
+          "url": "https://github.com/bakhodirovShakhzod/analytics_api"
+        },
+        {
+          "title": "Missionland App",
+          "url": "https://github.com/bakhodirovShakhzod/missionland_app"
+        }
+      ],
       "affiliations": [
         {
           "name": "WIUT",
@@ -65,12 +91,25 @@
     {
       "name": "Husanxon",
       "role": "Data labelling",
-      "built": [],
+      "built": [
+        "Reviewed the sample footage and labelled event boundaries",
+        "Checked annotations against the official class conventions",
+        "Supported visual review of detections and failure cases"
+      ],
       "photo": "team/husanxon.png",
       "github": "https://github.com/Husanxon4407",
       "linkedin": "https://www.linkedin.com/in/husanxon-bahodirxonov-16256b3a8/",
-      "portfolio": "",
-      "projects": [],
+      "portfolio": "https://github.com/Husanxon4407/portfolio-website",
+      "projects": [
+        {
+          "title": "Portfolio Website",
+          "url": "https://github.com/Husanxon4407/portfolio-website"
+        },
+        {
+          "title": "Student Registration Portal",
+          "url": "https://github.com/Husanxon4407/student-registration-portal"
+        }
+      ],
       "affiliations": [
         {
           "name": "WIUT",

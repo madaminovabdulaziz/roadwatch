@@ -8,7 +8,7 @@
     "predev": "npm run sync",
     "dev": "next dev",
     "prebuild": "npm run sync",
-    "build": "next build",
+    "build": "next build --webpack",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

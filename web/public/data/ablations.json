@@ -10,7 +10,7 @@
     },
     {
      "variant": "frames thinned by the old pacer (4-core Kaggle T4)",
-     "value": 0.421
+     "value": 0.518
     }
    ],
    "takeaway": "Tracking at 10 Hz matters: when the old pacer dropped frames to save time, tracks broke and a fifth of the score went. The pacer now thins only when a run would overrun.",

@@ -21,17 +21,17 @@
   "start": 11.578
  },
  {
-  "label": "red_light",
-  "clip": "results/C3905/clip_red_light.mp4",
-  "poster": "results/C3905/clip_red_light.jpg",
-  "video": "C3905.MP4",
-  "start": 33.566
- },
- {
   "label": "stop_line",
   "clip": "results/C3905/clip_stop_line.mp4",
   "poster": "results/C3905/clip_stop_line.jpg",
   "video": "C3905.MP4",
   "start": 75.542
+ },
+ {
+  "label": "red_light",
+  "clip": "results/C3905/clip_red_light.mp4",
+  "poster": "results/C3905/clip_red_light.jpg",
+  "video": "C3905.MP4",
+  "start": 33.566
  }
 ]

@@ -1,6 +1,7 @@
 {
  "source": "evaluate.py: predictions_samples.json (official harness run) vs labels/dev_gt.json",
  "videos": 2,
+ "minutes": 7.42,
  "gt_events": 39,
  "pred_events": 41,
  "score_a": 0.5182,
