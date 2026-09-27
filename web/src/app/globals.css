@@ -1027,6 +1027,59 @@ button:disabled {
   color: var(--muted);
   line-height: 1.6;
 }
+
+/* Ablations (views/AblationsView.tsx): one panel per experiment, bars scaled within the panel */
+.ablation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.ablation-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.ablation-rows {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+}
+.ablation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 34%) 64px;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+.ablation-variant {
+  color: var(--ink-soft);
+}
+.ablation-bar {
+  height: 8px;
+  background: var(--line);
+}
+.ablation-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.ablation-value {
+  font-family: var(--mono);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ablation-takeaway {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+.confusion-table td {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.confusion-table td:first-child {
+  text-align: left;
+}
 .figure {
   margin: 0;
 }
@@ -1347,6 +1400,7 @@ button:disabled {
   .explore-grid,
   .clip-grid,
   .clip-grid-two,
+  .ablation-grid,
   .figure-grid,
   .figures {
     grid-template-columns: 1fr;

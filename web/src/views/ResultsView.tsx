@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import SampleResult from "@/components/SampleResult";
+import AblationsView from "@/views/AblationsView";
 import { Choices, Loading, Missing, Section } from "@/components/ui";
 import { className, classColor } from "@/lib/classes";
 import { dataUrl, useJson, type Metrics, type ResultsIndex } from "@/lib/data";
@@ -62,6 +63,8 @@ export default function ResultsView() {
           )
         )}
       </Section>
+
+      <AblationsView />
 
       {gallery.state === "ok" && gallery.data.length > 0 && (
         <Section title="One clip per detected class">
