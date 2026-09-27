@@ -14,6 +14,8 @@ def test_alarms_are_counted_as_evaluate_counts_them() -> None:
 
 def test_report_numbers_come_from_the_files() -> None:
     metrics = {
+        "videos": 1,
+        "minutes": 2.0,
         "gt_events": 39,
         "pred_events": 42,
         "score_a": 0.4706,
@@ -27,6 +29,7 @@ def test_report_numbers_come_from_the_files() -> None:
     assert facts["alarms"] == 1 and facts["minutes"] == 2.0 and facts["ratios"] == "a 3.00x"
     text = " ".join(p for s in write_report.report(facts)["sections"] for p in s["paragraphs"])
     assert "Score A 0.471 (42 predicted events)" in text
+    assert "We labelled 1 of the 1 sample videos ourselves (2.0 min, 39 events)" in text
     assert "stop_line 1.00" in text and "count as 0: stopped_vehicle" in text
     assert "1 alarm in 2.0 min" in text and "  " not in text
     assert "inside the budget." in text

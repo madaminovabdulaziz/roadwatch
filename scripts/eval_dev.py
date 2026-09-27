@@ -134,6 +134,7 @@ def main() -> int:
             else "scripts/eval_dev.py on labels/dev_gt.json (Part A from the track caches)"
         ),
         "videos": len(gt),
+        "minutes": round(sum(v.get("duration", 0.0) for v in gt.values()) / 60, 2),
         "gt_events": sum(len(v["events"]) for v in gt.values()),
         "pred_events": sum(len(v["events"]) for v in pred["videos"].values()),
         "score_a": round(a["score_a"], 4),

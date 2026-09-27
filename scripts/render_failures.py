@@ -54,6 +54,19 @@ CASES: list[dict[str, Any]] = [
         ),
     },
     {
+        "slug": "accident_car_beside_pedestrian",
+        "video": "C3896",
+        "t0": 193.0,
+        "t1": 199.0,
+        "title": "Fixed: a car pulling up beside a pedestrian read as an accident",
+        "why": (
+            "Found by reviewing the unlabelled third sample event by event. The car braked hard and then "
+            "stood right next to the person, which passed both the shock and the confirmation. With a "
+            "pedestrian involved, the evidence now has to come from the pedestrian: a fall, or vanishing "
+            "right after the contact. A car braking beside someone is what an avoided crash looks like."
+        ),
+    },
+    {
         "slug": "stopped_bus_far_stop",
         "video": "C3902",
         "t0": 18.0,

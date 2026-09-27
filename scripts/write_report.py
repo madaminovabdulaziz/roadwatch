@@ -51,6 +51,8 @@ def facts(
     return {
         "videos": len(log),
         "minutes": minutes,
+        "labelled_videos": metrics["videos"],
+        "labelled_minutes": metrics.get("minutes", minutes),
         "gt_events": metrics["gt_events"],
         "pred_events": metrics["pred_events"],
         "score_a": metrics["score_a"],
@@ -110,10 +112,11 @@ def report(f: dict[str, Any]) -> dict[str, Any]:
             flags, combined in a logistic score and smoothed over time. It never opens the file.""",
         ],
         "How well it works": [
-            f"""We labelled the {f["videos"]} sample videos ourselves ({f["minutes"]:.1f} min,
-            {f["gt_events"]} events) and scored the real submission run on a T4 with the official
-            evaluate.py: Score A {f["score_a"]:.3f} ({f["pred_events"]} predicted events). Mean F1
-            over tIoU 0.3/0.5/0.7 per class: {f["best"]}. Labelled classes we keep off count as 0:
+            f"""We labelled {f["labelled_videos"]} of the {f["videos"]} sample videos ourselves
+            ({f["labelled_minutes"]:.1f} min, {f["gt_events"]} events) and scored the real submission
+            run on a T4 with the official evaluate.py: Score A {f["score_a"]:.3f}
+            ({f["pred_events"]} predicted events). Mean F1 over tIoU 0.3/0.5/0.7 per class:
+            {f["best"]}. Labelled classes we keep off count as 0:
             {off}. With so few events one mistake moves a class by a third, so we read these numbers
             as a check, not a leaderboard.""",
             f"""Part B: the samples contain no accident, so all we can measure is calm:
@@ -130,16 +133,25 @@ def report(f: dict[str, Any]) -> dict[str, Any]:
             scored on real traffic in seconds. Looking at every error on the frames before changing
             anything: Part B went from 31 false alarms to 2 in 7.4 min once a conflict had to need
             emergency braking and was only measured where the camera resolves it; failure_to_yield
-            went from 51 false positives to 8; accident from 4 to 0; a bus hidden behind another no
-            longer 'crosses' a solid line.""",
+            went from 51 false positives to 8; a bus hidden behind another no longer 'crosses' a solid
+            line. Reviewing the unlabelled third sample event by event caught a false accident, a car
+            pulling up hard beside a pedestrian: with a pedestrian involved, the pedestrian now has to
+            show the hit (a fall, or vanishing right after the contact). The same review showed our
+            drawn stop line sits half a metre before the paint, so 'past the line' now means 2 m.""",
+            """Keeping pacing honest: the pacer used to read the GPU warm-up as falling behind and
+            dropped frames even on runs that fit, which cost a fifth of the score on a slow machine.
+            It now judges the projected finish after a grace period, and the official run on a 4-core
+            T4 keeps the full frame rate.""",
         ],
         "What did not": [
-            """near_miss: far from the camera, box jitter looks exactly like hard braking (23 false
-            positives), so it is off. stopped_vehicle: the only stops in the samples are buses at
-            the far bus stop, where one pixel is 9-16 cm of road. illegal_u_turn: we found no sign
-            that forbids U-turns here, and the one U-turn paused for 26 s. jaywalking: people
-            waiting in the kerb lane count by the definition and join separate crossings into long
-            events. The Results page shows each case.""",
+            """near_miss: rebuilt on Part B's conflict test plus the vehicle's own braking, it went
+            from 23 false events to 4, but all 4 were occlusion, id switches or people on the
+            pavement, and the samples hold no real near miss to measure it on, so it stays off.
+            stopped_vehicle: the only stops are buses at the far bus stop, where one pixel is 9-16 cm
+            of road, and a car waiting a minute at the median to turn looked like one. illegal_u_turn:
+            we found no sign that forbids U-turns here, and the one U-turn paused for 26 s.
+            jaywalking: people waiting in the kerb lane count by the definition and join separate
+            crossings into long events. The Results page shows each case.""",
         ],
         "What we would do next": [
             """Label more video, including the reference recording and other times of day, and learn
